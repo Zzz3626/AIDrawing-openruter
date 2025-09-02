@@ -110,6 +110,16 @@ class Fct(BasePlugin):
         fallback_cfg = cfg.get('fallback', {})
         out_dir = cfg.get('storage', {}).get('output_dir') or 'generated'
 
+        # Helper to robustly extract API key from config
+        def _get_api_key(cfg_dict):
+            if not isinstance(cfg_dict, dict):
+                return None
+            for k in ("api_key", "apikey", "apiKey", "key", "token", "OPENROUTER_API_KEY"):
+                v = cfg_dict.get(k)
+                if isinstance(v, str) and v.strip():
+                    return v.strip()
+            return None
+
         if openrouter_cfg.get('enabled', True):
             try:
                 filename = f"drawer_{uuid.uuid4().hex}.png"
@@ -120,7 +130,7 @@ class Fct(BasePlugin):
                     site_url=(openrouter_cfg.get('site_url') or None),
                     site_title=(openrouter_cfg.get('site_title') or None),
                     model=openrouter_cfg.get('model', 'google/gemini-2.5-flash-image-preview:free') or 'google/gemini-2.5-flash-image-preview:free',
-                    api_key=(openrouter_cfg.get('api_key') or None),
+                    api_key=(_get_api_key(openrouter_cfg) or None),
                 )
                 return f"file://{img_path}"
             except Exception as e:
@@ -213,7 +223,7 @@ class Fct(BasePlugin):
                     site_url=(openrouter_cfg.get('site_url') or None),
                     site_title=(openrouter_cfg.get('site_title') or None),
                     model=openrouter_cfg.get('model', 'google/gemini-2.5-flash-image-preview:free') or 'google/gemini-2.5-flash-image-preview:free',
-                    api_key=(openrouter_cfg.get('api_key') or None),
+                    api_key=(_get_api_key(openrouter_cfg) or None),
                 )
                 self.ap.logger.info(f"{prefix} 生成完成，发送本地图片 {img_path}")
                 return ctx.add_return('reply', MessageChain([Image(path=img_path)]))
@@ -225,4 +235,3 @@ class Fct(BasePlugin):
             return ctx.add_return('reply', MessageChain([Image(url=url)]))
         else:
             return ctx.add_return('reply', MessageChain([Plain('生成失败，且已禁用回退')]))
-
