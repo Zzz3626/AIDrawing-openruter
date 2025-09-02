@@ -159,6 +159,10 @@ async def generate_image_with_openrouter(
             # OpenAI Responses API style: {"type":"output_image", "image": {"b64":..., "mime_type":...}} or variants
             if node.get("type") in {"output_image", "image", "image_url"}:
                 img = node.get("image") or node.get("image_url") or node
+                # Direct string URL
+                if isinstance(img, str) and img.startswith("http"):
+                    log.info(f"Downloading image from URL (string): {img}")
+                    return await download_image(img, out_path)
                 if isinstance(img, dict):
                     # Base64 variants
                     for k in ("b64_json", "b64", "base64", "data"):
@@ -178,8 +182,31 @@ async def generate_image_with_openrouter(
                                 return abs_path
                             except Exception as _e:
                                 log.debug("Base64 decode candidate failed: %s", _e)
+                    # Nested source shapes e.g. {source:{data,url,media_type}}
+                    src = img.get("source") if isinstance(img.get("source"), dict) else None
+                    if src:
+                        for k in ("b64_json", "b64", "base64", "data"):
+                            b64v = src.get(k)
+                            if isinstance(b64v, str) and len(b64v) > 64:
+                                try:
+                                    if b64v.startswith("data:image"):
+                                        comma = b64v.find(",")
+                                        if comma != -1:
+                                            b64v = b64v[comma + 1 :]
+                                    data = base64.b64decode(b64v)
+                                    with open(out_path, "wb") as f:
+                                        f.write(data)
+                                    abs_path = os.path.abspath(out_path)
+                                    log.info(f"Saved image b64 (source) to {abs_path}")
+                                    return abs_path
+                                except Exception as _e:
+                                    log.debug("Base64 (source) decode failed: %s", _e)
+                        url = src.get("url")
+                        if isinstance(url, str) and url.startswith("http"):
+                            log.info(f"Downloading image from URL (source): {url}")
+                            return await download_image(url, out_path)
                     # URL variants
-                    url = img.get("url") or img.get("image_url")
+                    url = img.get("url") or img.get("image_url") or img.get("link")
                     if isinstance(url, str) and url.startswith("http"):
                         log.info(f"Downloading image from URL: {url}")
                         return await download_image(url, out_path)
@@ -189,6 +216,34 @@ async def generate_image_with_openrouter(
                 if url.startswith("http"):
                     log.info(f"Downloading image from URL: {url}")
                     return await download_image(url, out_path)
+            # Attachments style: {attachments:[{mime_type, url, data}]}
+            if isinstance(node.get("attachments"), list):
+                for att in node.get("attachments"):
+                    if not isinstance(att, dict):
+                        continue
+                    mt = att.get("mime_type") or att.get("mime") or ""
+                    if isinstance(mt, str) and mt.startswith("image/"):
+                        # base64
+                        for k in ("b64_json", "b64", "base64", "data"):
+                            b64v = att.get(k)
+                            if isinstance(b64v, str) and len(b64v) > 64:
+                                try:
+                                    if b64v.startswith("data:image"):
+                                        comma = b64v.find(",")
+                                        if comma != -1:
+                                            b64v = b64v[comma + 1 :]
+                                    data = base64.b64decode(b64v)
+                                    with open(out_path, "wb") as f:
+                                        f.write(data)
+                                    abs_path = os.path.abspath(out_path)
+                                    log.info(f"Saved image b64 (attachment) to {abs_path}")
+                                    return abs_path
+                                except Exception as _e:
+                                    log.debug("Attachment base64 decode failed: %s", _e)
+                        u = att.get("url") or att.get("image_url")
+                        if isinstance(u, str) and u.startswith("http"):
+                            log.info(f"Downloading image from URL (attachment): {u}")
+                            return await download_image(u, out_path)
 
         # 2) Check message content string(s) for data URL or http URL
         try:
@@ -201,7 +256,7 @@ async def generate_image_with_openrouter(
             content_val = None
 
         def _try_extract_from_text(s: str) -> str | None:
-            data_uri_match = re.search(r"data:image/(png|jpeg);base64,([A-Za-z0-9+/=]+)", s)
+            data_uri_match = re.search(r"data:image/(png|jpe?g|webp|gif);base64,([A-Za-z0-9+/=]+)", s, flags=re.IGNORECASE)
             if data_uri_match:
                 img_bytes = base64.b64decode(data_uri_match.group(2))
                 with open(out_path, "wb") as f:
@@ -229,9 +284,34 @@ async def generate_image_with_openrouter(
                 if isinstance(part, dict):
                     t = part.get("type")
                     if t in {"image_url", "image", "output_image"}:
-                        url = (part.get("image_url") or part.get("image") or {}).get("url") if isinstance(part.get("image_url") or part.get("image"), dict) else None
-                        if isinstance(url, str) and url.startswith("http"):
-                            return await download_image(url, out_path)
+                        v = part.get("image_url") or part.get("image")
+                        # direct string
+                        if isinstance(v, str) and v.startswith("http"):
+                            return await download_image(v, out_path)
+                        # object with url
+                        if isinstance(v, dict):
+                            url = v.get("url") or v.get("image_url") or v.get("link")
+                            if isinstance(url, str) and url.startswith("http"):
+                                return await download_image(url, out_path)
+                            # nested source
+                            src = v.get("source") if isinstance(v.get("source"), dict) else None
+                            if src:
+                                url = src.get("url")
+                                if isinstance(url, str) and url.startswith("http"):
+                                    return await download_image(url, out_path)
+                                for k in ("b64_json", "b64", "base64", "data"):
+                                    b64v = src.get(k)
+                                    if isinstance(b64v, str) and len(b64v) > 64:
+                                        try:
+                                            if b64v.startswith("data:image"):
+                                                comma = b64v.find(",")
+                                                if comma != -1:
+                                                    b64v = b64v[comma + 1 :]
+                                            with open(out_path, "wb") as f:
+                                                f.write(base64.b64decode(b64v))
+                                            return os.path.abspath(out_path)
+                                        except Exception as _e:
+                                            log.debug("Part source base64 decode failed: %s", _e)
                     txt = part.get("text") or part.get("input_text") or ""
                     if isinstance(txt, str) and txt:
                         maybe = _try_extract_from_text(txt)
@@ -297,9 +377,10 @@ async def generate_image_with_openrouter(
     content = (getattr(getattr(completion.choices[0], "message", {}), "content", "") or "")
     if isinstance(content, str):
         log.debug("OpenRouter raw content length=%d", len(content))
-        data_uri_match = re.search(r"data:image/(png|jpeg);base64,([A-Za-z0-9+/=]+)", content)
+        # Match any image mime-type like the official sample (broader than png/jpeg)
+        data_uri_match = re.search(r"data:image/[^;]+;base64,([A-Za-z0-9+/=]+)", content, flags=re.IGNORECASE)
         if data_uri_match:
-            img_bytes = base64.b64decode(data_uri_match.group(2))
+            img_bytes = base64.b64decode(data_uri_match.group(1))
             with open(out_path, "wb") as f:
                 f.write(img_bytes)
             abs_path = os.path.abspath(out_path)
