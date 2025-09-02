@@ -1,6 +1,11 @@
 from pkg.plugin.context import register, handler, llm_func, BasePlugin, APIHost, EventContext
 from pkg.plugin.events import *  # 导入事件
 from pkg.platform.types import *
+# 显式导入关键类型，方便静态检查器识别
+try:
+    from pkg.platform.types import MessageChain, Image, Plain  # type: ignore
+except Exception:
+    pass
 import re
 import os
 import json
@@ -288,6 +293,13 @@ class Fct(BasePlugin):
                     ap = '/' + ap
             return f"file://{ap}"
 
+        def _is_http_url(s: str) -> bool:
+            try:
+                sl = s.lower().strip()
+                return sl.startswith('http://') or sl.startswith('https://')
+            except Exception:
+                return False
+
         # 1) “图片已生成: 本地路径”
         m = generated_image_pattern.search(message)
         if m:
@@ -295,8 +307,8 @@ class Fct(BasePlugin):
             try:
                 self.ap.logger.info(f"检测到生成的图片，正在发送.. {path}")
                 if os.path.exists(path):
-                    file_uri = _to_file_uri(path)
-                    ctx.add_return('reply', MessageChain([Image(url=file_uri)]))
+                    # 使用本地路径字段，避免 url 字段的 http/https 校验
+                    ctx.add_return('reply', MessageChain([Image(path=path)]))
                 else:
                     ctx.add_return('reply', MessageChain([Plain(f"图片文件不存在: {path}")]))
             except Exception as e:
@@ -309,9 +321,11 @@ class Fct(BasePlugin):
             path = _sanitize_path(m.group(1))
             try:
                 self.ap.logger.info(f"正在发送本地图片.. {path}")
-                if os.path.exists(path):
-                    file_uri = _to_file_uri(path)
-                    ctx.add_return('reply', MessageChain([Image(url=file_uri)]))
+                # Markdown 中既可能是 URL，也可能是本地路径
+                if _is_http_url(m.group(1)):
+                    ctx.add_return('reply', MessageChain([Image(url=m.group(1))]))
+                elif os.path.exists(path):
+                    ctx.add_return('reply', MessageChain([Image(path=path)]))
                 else:
                     ctx.add_return('reply', MessageChain([Plain(f"图片文件不存在: {path}")]))
             except Exception as e:
@@ -340,8 +354,8 @@ class Fct(BasePlugin):
             try:
                 self.ap.logger.info(f"正在发送本地图片.. {path}")
                 if os.path.exists(path):
-                    file_uri = _to_file_uri(path)
-                    ctx.add_return('reply', MessageChain([Image(url=file_uri)]))
+                    # 通过 path 字段发送本地文件，避免 pydantic HttpUrl 校验
+                    ctx.add_return('reply', MessageChain([Image(path=path)]))
                 else:
                     ctx.add_return('reply', MessageChain([Plain(f"图片文件不存在: {path}")]))
             except Exception as e:
