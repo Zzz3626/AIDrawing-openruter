@@ -79,6 +79,26 @@ class Fct(BasePlugin):
                             else:
                                 dst[k] = v
                     merge(self.config, user_cfg)
+            # Normalize API key after merge: support variants and env
+            _open = self.config.get('openrouter', {}) or {}
+            def _pick_key(d: dict):
+                if not isinstance(d, dict):
+                    return None
+                for _k in ("api_key", "apikey", "apiKey", "key", "token", "OPENROUTER_API_KEY"):
+                    _v = d.get(_k)
+                    if isinstance(_v, str) and _v.strip():
+                        return _v.strip()
+                return None
+            _resolved_key = _pick_key(_open) or _pick_key(self.config) or os.getenv('OPENROUTER_API_KEY')
+            if _resolved_key:
+                # Persist normalized location for downstream usage
+                _open['api_key'] = _resolved_key
+                self.config['openrouter'] = _open
+                if hasattr(self, 'ap') and getattr(self, 'ap', None):
+                    self.ap.logger.info(f"OpenRouter API Key 已配置 (len={len(_resolved_key)}). 配置文件: {cfg_path}")
+            else:
+                if hasattr(self, 'ap') and getattr(self, 'ap', None):
+                    self.ap.logger.info(f"未在配置/环境中检测到 OpenRouter API Key。配置文件: {cfg_path}")
         except Exception as e:
             if hasattr(self, 'ap') and getattr(self, 'ap', None):
                 self.ap.logger.warning(f"读取配置失败，使用默认配置: {e}")
@@ -110,14 +130,25 @@ class Fct(BasePlugin):
         fallback_cfg = cfg.get('fallback', {})
         out_dir = cfg.get('storage', {}).get('output_dir') or 'generated'
 
-        # Helper to robustly extract API key from config
-        def _get_api_key(cfg_dict):
-            if not isinstance(cfg_dict, dict):
-                return None
-            for k in ("api_key", "apikey", "apiKey", "key", "token", "OPENROUTER_API_KEY"):
-                v = cfg_dict.get(k)
-                if isinstance(v, str) and v.strip():
-                    return v.strip()
+        # Helper to robustly extract API key from config/root/env
+        def _get_api_key(openrouter_dict, root_cfg=self.config):
+            import os as _os
+            # 1) check openrouter section
+            if isinstance(openrouter_dict, dict):
+                for k in ("api_key", "apikey", "apiKey", "key", "token", "OPENROUTER_API_KEY"):
+                    v = openrouter_dict.get(k)
+                    if isinstance(v, str) and v.strip():
+                        return v.strip()
+            # 2) check root-level fallbacks
+            if isinstance(root_cfg, dict):
+                for k in ("openrouter_api_key", "OPENROUTER_API_KEY", "api_key", "apiKey", "apikey", "key", "token"):
+                    v = root_cfg.get(k)
+                    if isinstance(v, str) and v.strip():
+                        return v.strip()
+            # 3) environment
+            v = _os.getenv("OPENROUTER_API_KEY")
+            if isinstance(v, str) and v.strip():
+                return v.strip()
             return None
 
         if openrouter_cfg.get('enabled', True):
