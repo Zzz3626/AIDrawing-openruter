@@ -73,6 +73,16 @@ async def generate_image_with_openrouter(
     Returns absolute path to the saved image file.
     """
     log = _get_logger()
+    
+    # 确保输出目录存在
+    try:
+        out_dir = os.path.dirname(out_path)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+            log.debug(f"Ensured directory exists: {out_dir}")
+    except Exception as e:
+        log.warning(f"Failed to create directory for {out_path}: {e}")
+    
     from openai import OpenAI
 
     env_key = os.getenv("OPENROUTER_API_KEY")

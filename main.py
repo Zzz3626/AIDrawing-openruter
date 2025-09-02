@@ -245,7 +245,8 @@ class Fct(BasePlugin):
                     model=openrouter_cfg.get('model', 'google/gemini-2.5-flash-image-preview:free') or 'google/gemini-2.5-flash-image-preview:free',
                     api_key=(_get_api_key(openrouter_cfg) or None),
                 )
-                return f"![图片]({img_path})"
+                # 直接返回文件路径，由消息处理器处理
+                return f"图片已生成: {img_path}"
             except Exception as e:
                 self.ap.logger.warning(f"OpenRouter 生成失败，准备回退: {e}")
                 try:
@@ -265,10 +266,27 @@ class Fct(BasePlugin):
         message = ctx.event.response_text
         image_pattern = re.compile(r'(https://image[^\s)]+)')
         file_pattern = re.compile(r'(file://[^\s)]+)')
-        markdown_image_pattern = re.compile(r'!\[图片\]\(([^)]+)\)')
+        # 修复正则表达式：匹配 ![](path) 或 ![图片](path) 格式
+        markdown_image_pattern = re.compile(r'!\[[^\]]*\]\(([^)]+)\)')
+        # 添加对 "图片已生成: 路径" 格式的检测
+        generated_image_pattern = re.compile(r'图片已生成:\s*([/\w\-_.]+\.(?:png|jpg|jpeg|gif|webp))', re.IGNORECASE)
         
-        # 如果匹配到了markdown图片格式 ![图片](path)
-        if markdown_image_pattern.search(message):
+        # 检查是否包含生成的图片路径
+        if generated_image_pattern.search(message):
+            path = generated_image_pattern.search(message).group(1)
+            try:
+                self.ap.logger.info(f"检测到生成的图片，正在发送.. {path}")
+                # 检查文件是否存在
+                if os.path.exists(path):
+                    ctx.add_return('reply', MessageChain([Image(path=path)]))
+                else:
+                    self.ap.logger.warning(f"生成的图片文件不存在: {path}")
+                    ctx.add_return('reply', MessageChain([Plain(f"图片文件不存在: {path}")]))
+            except Exception as e:
+                await ctx.send_message(ctx.event.launcher_type, str(ctx.event.launcher_id), MessageChain([f"发生了一个错误：{e}"]))
+                return
+        # 如果匹配到了markdown图片格式 ![](path) 或 ![图片](path)
+        elif markdown_image_pattern.search(message):
             path = markdown_image_pattern.search(message).group(1)
             try:
                 self.ap.logger.info(f"正在发送本地图片.. {path}")
@@ -280,7 +298,7 @@ class Fct(BasePlugin):
                     ctx.add_return('reply', MessageChain([Plain(f"图片文件不存在: {path}")]))
             except Exception as e:
                 await ctx.send_message(ctx.event.launcher_type, str(ctx.event.launcher_id), MessageChain([f"发生了一个错误：{e}"]))
-        # 如果匹配到了image_pattern
+                return
         elif image_pattern.search(message):
             url = image_pattern.search(message).group(1)
             try:
