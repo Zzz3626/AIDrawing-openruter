@@ -207,9 +207,22 @@ async def generate_image_with_openrouter(
                             return await download_image(url, out_path)
                     # URL variants
                     url = img.get("url") or img.get("image_url") or img.get("link")
-                    if isinstance(url, str) and url.startswith("http"):
-                        log.info(f"Downloading image from URL: {url}")
-                        return await download_image(url, out_path)
+                    if isinstance(url, str):
+                        if url.startswith("http"):
+                            log.info(f"Downloading image from URL: {url}")
+                            return await download_image(url, out_path)
+                        if url.startswith("data:image"):
+                            try:
+                                comma = url.find(",")
+                                if comma != -1:
+                                    b64v = url[comma + 1 :]
+                                    with open(out_path, "wb") as f:
+                                        f.write(base64.b64decode(b64v))
+                                    abs_path = os.path.abspath(out_path)
+                                    log.info(f"Saved image from data URI (url field) to {abs_path}")
+                                    return abs_path
+                            except Exception as _e:
+                                log.debug("Data URI decode (url field) failed: %s", _e)
             # Some providers return {"mime_type":"image/png","url":"..."}
             if (node.get("mime_type", "").startswith("image/") and isinstance(node.get("url"), str)):
                 url = node["url"]
@@ -291,8 +304,19 @@ async def generate_image_with_openrouter(
                         # object with url
                         if isinstance(v, dict):
                             url = v.get("url") or v.get("image_url") or v.get("link")
-                            if isinstance(url, str) and url.startswith("http"):
-                                return await download_image(url, out_path)
+                            if isinstance(url, str):
+                                if url.startswith("http"):
+                                    return await download_image(url, out_path)
+                                if url.startswith("data:image"):
+                                    try:
+                                        comma = url.find(",")
+                                        if comma != -1:
+                                            b64v = url[comma + 1 :]
+                                            with open(out_path, "wb") as f:
+                                                f.write(base64.b64decode(b64v))
+                                            return os.path.abspath(out_path)
+                                    except Exception as _e:
+                                        log.debug("Part url data URI decode failed: %s", _e)
                             # nested source
                             src = v.get("source") if isinstance(v.get("source"), dict) else None
                             if src:
