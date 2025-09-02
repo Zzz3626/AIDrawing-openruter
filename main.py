@@ -5,6 +5,8 @@ import re
 import os
 import json
 import uuid
+import logging
+from pathlib import Path
 
 # Prefer local get_image within this plugin; fall back gracefully
 try:
@@ -49,6 +51,26 @@ except NameError:
 @register(name="AIDrawing", description="使用function calling函数实现AI画图的功能，并自带图像发送", version="0.1", author="Hanschase")
 class Fct(BasePlugin):
     def __init__(self, host: APIHost):
+        # setup file logger once
+        try:
+            base_dir_for_log = Path(__file__).parent
+        except Exception:
+            base_dir_for_log = Path(os.getcwd())
+        log_dir = base_dir_for_log / "logs"
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+            self._logger = logging.getLogger("AIDrawing")
+            if not self._logger.handlers:
+                fh = logging.FileHandler(log_dir / "aidrawing.log", encoding="utf-8")
+                fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+                fh.setFormatter(fmt)
+                fh.setLevel(logging.DEBUG)
+                self._logger.addHandler(fh)
+            self._logger.setLevel(logging.DEBUG)
+        except Exception:
+            self._logger = logging.getLogger("AIDrawing")
+            self._logger.setLevel(logging.DEBUG)
+
         # 读取配置文件（与本文件同目录）config.json
         try:
             base_dir = os.path.dirname(__file__)
@@ -96,12 +118,25 @@ class Fct(BasePlugin):
                 self.config['openrouter'] = _open
                 if hasattr(self, 'ap') and getattr(self, 'ap', None):
                     self.ap.logger.info(f"OpenRouter API Key 已配置 (len={len(_resolved_key)}). 配置文件: {cfg_path}")
+                # also write to file log
+                try:
+                    self._logger.info(f"API key detected via config/env. len={len(_resolved_key)}; cfg={cfg_path}")
+                except Exception:
+                    pass
             else:
                 if hasattr(self, 'ap') and getattr(self, 'ap', None):
                     self.ap.logger.info(f"未在配置/环境中检测到 OpenRouter API Key。配置文件: {cfg_path}")
+                try:
+                    self._logger.warning(f"No API key in config/env. cfg={cfg_path}")
+                except Exception:
+                    pass
         except Exception as e:
             if hasattr(self, 'ap') and getattr(self, 'ap', None):
                 self.ap.logger.warning(f"读取配置失败，使用默认配置: {e}")
+            try:
+                self._logger.exception("Failed to load config.json: %s", e)
+            except Exception:
+                pass
         # 确保输出目录存在
         out_dir = self.config.get('storage', {}).get('output_dir') or 'generated'
         try:
@@ -109,6 +144,10 @@ class Fct(BasePlugin):
         except Exception as e:
             if hasattr(self, 'ap') and getattr(self, 'ap', None):
                 self.ap.logger.warning(f"创建输出目录失败，将使用当前目录: {e}")
+            try:
+                self._logger.warning("Failed to create output dir '%s': %s", out_dir, e)
+            except Exception:
+                pass
 
     @llm_func(name="Drawer")
     async def _(self,query, keywords: str)->str:
@@ -155,6 +194,13 @@ class Fct(BasePlugin):
             try:
                 filename = f"drawer_{uuid.uuid4().hex}.png"
                 out_path = os.path.join(out_dir, filename)
+                try:
+                    # file log what we will call
+                    key_for_call = (_get_api_key(openrouter_cfg) or None)
+                    masked = (key_for_call[:4] + '***' + key_for_call[-4:]) if isinstance(key_for_call, str) and len(key_for_call) >= 8 else str(bool(key_for_call))
+                    self._logger.info(f"Call generate_image_with_openrouter keywords_len={len(keywords)} model={openrouter_cfg.get('model')} out_path={out_path} api_key={masked}")
+                except Exception:
+                    pass
                 img_path = await generate_image_with_openrouter(
                     keywords,
                     out_path=out_path,
@@ -166,6 +212,10 @@ class Fct(BasePlugin):
                 return f"file://{img_path}"
             except Exception as e:
                 self.ap.logger.warning(f"OpenRouter 生成失败，准备回退: {e}")
+                try:
+                    self._logger.warning("OpenRouter failed, will fallback: %s", e)
+                except Exception:
+                    pass
 
         # 回退
         if fallback_cfg.get('enabled', True):
@@ -248,6 +298,12 @@ class Fct(BasePlugin):
             try:
                 filename = f"drawer_{uuid.uuid4().hex}.png"
                 out_path = os.path.join(out_dir, filename)
+                try:
+                    key_for_call = (_get_api_key(openrouter_cfg) or None)
+                    masked = (key_for_call[:4] + '***' + key_for_call[-4:]) if isinstance(key_for_call, str) and len(key_for_call) >= 8 else str(bool(key_for_call))
+                    self._logger.info(f"Call generate_image_with_openrouter prompt_len={len(prompt)} model={openrouter_cfg.get('model')} out_path={out_path} api_key={masked}")
+                except Exception:
+                    pass
                 img_path = await generate_image_with_openrouter(
                     prompt,
                     out_path=out_path,
@@ -260,6 +316,10 @@ class Fct(BasePlugin):
                 return ctx.add_return('reply', MessageChain([Image(path=img_path)]))
             except Exception as e:
                 self.ap.logger.warning(f"OpenRouter 生成失败，准备回退: {e}")
+                try:
+                    self._logger.warning("OpenRouter failed, will fallback: %s", e)
+                except Exception:
+                    pass
 
         if fallback_cfg.get('enabled', True):
             url = "https://image.pollinations.ai/prompt/" + prompt

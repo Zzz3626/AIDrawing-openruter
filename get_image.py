@@ -1,10 +1,42 @@
 import os
 import base64
 import httpx
+import logging
+from pathlib import Path
+
+
+_logger = None
+
+
+def _get_logger() -> logging.Logger:
+    global _logger
+    if _logger is not None:
+        return _logger
+    logger = logging.getLogger("AIDrawing")
+    logger.setLevel(logging.DEBUG)
+    if not logger.handlers:
+        try:
+            base_dir = Path(__file__).parent
+        except Exception:
+            base_dir = Path(os.getcwd())
+        log_dir = base_dir / "logs"
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+            fh = logging.FileHandler(log_dir / "aidrawing.log", encoding="utf-8")
+            fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+            fh.setFormatter(fmt)
+            fh.setLevel(logging.DEBUG)
+            logger.addHandler(fh)
+        except Exception:
+            # Fallback to basic config if file handler fails
+            logging.basicConfig(level=logging.DEBUG)
+    _logger = logger
+    return logger
 
 
 async def download_image(url: str, out_path: str = "drawertemp.png") -> str:
     """Download image from a URL to out_path and return the path."""
+    log = _get_logger()
     async with httpx.AsyncClient() as client:
         response = await client.get(url)
         response.raise_for_status()
@@ -12,7 +44,9 @@ async def download_image(url: str, out_path: str = "drawertemp.png") -> str:
         import aiofiles
         async with aiofiles.open(out_path, 'wb') as f:
             await f.write(content)
-    return os.path.abspath(out_path)
+    abs_path = os.path.abspath(out_path)
+    log.debug(f"Downloaded image to {abs_path} from {url}")
+    return abs_path
 
 
 async def generate_image_with_openrouter(
@@ -29,15 +63,28 @@ async def generate_image_with_openrouter(
 
     Returns absolute path to the saved image file.
     """
+    log = _get_logger()
     from openai import OpenAI
 
-    api_key = api_key or os.getenv("OPENROUTER_API_KEY")
-    if not api_key:
+    env_key = os.getenv("OPENROUTER_API_KEY")
+    effective_key = api_key or env_key
+    def _mask(k: str | None) -> str:
+        if not k:
+            return "<empty>"
+        if len(k) <= 8:
+            return f"{k[0]}***{k[-1]}"
+        return f"{k[:4]}***{k[-4:]} (len={len(k)})"
+    log.debug(
+        "OpenRouter key resolution: passed=%s, env=%s, effective=%s",
+        _mask(api_key), _mask(env_key), _mask(effective_key),
+    )
+    if not effective_key:
+        log.warning("No OpenRouter API key available. Set openrouter.api_key or OPENROUTER_API_KEY")
         raise RuntimeError("OPENROUTER_API_KEY is not set in environment")
 
     client = OpenAI(
         base_url="https://openrouter.ai/api/v1",
-        api_key=api_key,
+        api_key=effective_key,
     )
 
     # Prefer the Images API if supported; fall back to chat if not.
@@ -48,6 +95,7 @@ async def generate_image_with_openrouter(
         headers["X-Title"] = site_title
 
     # Use chat.completions per OpenRouter's Gemini example; parse for image data/url
+    log.debug(f"Calling OpenRouter model={model}, headers={(list(headers.keys()) or None)}")
     completion = client.chat.completions.create(
         model=model,
         messages=[
@@ -61,6 +109,7 @@ async def generate_image_with_openrouter(
         extra_headers=headers or None,
     )
     content = completion.choices[0].message.content or ""
+    log.debug("OpenRouter raw content length=%d", len(content))
 
     # Try to extract a data URL or http(s) URL from the content
     import re
@@ -69,12 +118,17 @@ async def generate_image_with_openrouter(
         img_bytes = base64.b64decode(data_uri_match.group(2))
         with open(out_path, "wb") as f:
             f.write(img_bytes)
-        return os.path.abspath(out_path)
+        abs_path = os.path.abspath(out_path)
+        log.info(f"Saved image from data URI to {abs_path}")
+        return abs_path
 
     url_match = re.search(r"https?://\S+", content)
     if url_match:
         # Download the referenced URL
-        return await download_image(url_match.group(0), out_path)
+        url = url_match.group(0)
+        log.info(f"Downloading image from URL: {url}")
+        return await download_image(url, out_path)
 
     # If no image is found, surface the raw content for debugging
+    log.warning("Model did not return an image. First 200 chars: %s", content[:200])
     raise RuntimeError(f"模型未返回图片，返回内容: {content[:200]}...")
