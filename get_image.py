@@ -280,9 +280,9 @@ async def generate_image_with_openrouter(
                 img_bytes = base64.b64decode(data_uri_match.group(2))
                 with open(out_path, "wb") as f:
                     f.write(img_bytes)
-                abs_path = os.path.abspath(out_path)
-                log.info(f"Saved image from data URI to {abs_path}")
-                return abs_path
+                final_path = _safe_path(out_path)
+                log.info(f"Saved image from data URI to {final_path}")
+                return final_path
             url_match = re.search(r"https?://\S+", s)
             if url_match:
                 url = url_match.group(0)

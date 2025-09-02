@@ -146,6 +146,10 @@ class Fct(BasePlugin):
         storage_cfg = self.config.get('storage', {}) or {}
         raw_out_dir = storage_cfg.get('output_dir') or 'generated'
         try:
+            # 调试：打印配置加载情况
+            self._logger.info(f"Config loaded - storage config: {storage_cfg}")
+            self._logger.info(f"Raw output dir from config: {raw_out_dir}")
+            
             try:
                 _plugin_dir = os.path.dirname(__file__)
             except Exception:
@@ -187,6 +191,13 @@ class Fct(BasePlugin):
         fallback_cfg = cfg.get('fallback', {})
         # 使用已配置的绝对路径
         out_dir = cfg.get('storage', {}).get('output_dir') or '/root/LangBot/plugins/AIDrawing-openruter/generated'
+        
+        # 调试信息：打印实际使用的路径
+        try:
+            self._logger.info(f"Function calling - using out_dir: {out_dir}")
+            self.ap.logger.info(f"Function calling - 使用输出目录: {out_dir}")
+        except Exception:
+            pass
 
         # Helper to robustly extract API key from config/root/env
         def _get_api_key(openrouter_dict, root_cfg=self.config):
@@ -338,6 +349,13 @@ class Fct(BasePlugin):
         fallback_cfg = cfg.get('fallback', {})
         # 使用已配置的绝对路径
         out_dir = cfg.get('storage', {}).get('output_dir') or '/root/LangBot/plugins/AIDrawing-openruter/generated'
+
+        # 调试信息：打印实际使用的路径
+        try:
+            self._logger.info(f"Direct command - using out_dir: {out_dir}")
+            self.ap.logger.info(f"Direct command - 使用输出目录: {out_dir}")
+        except Exception:
+            pass
 
         # Helper to robustly extract API key from config/root/env
         def _get_api_key(openrouter_dict, root_cfg=self.config):
