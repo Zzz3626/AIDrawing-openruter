@@ -68,6 +68,30 @@ async def generate_image_with_openrouter(
 
     env_key = os.getenv("OPENROUTER_API_KEY")
     effective_key = api_key or env_key
+    # Fallback: read from local config.json if still missing
+    if not effective_key:
+        try:
+            base_dir = Path(__file__).parent
+        except Exception:
+            base_dir = Path(os.getcwd())
+        cfg_path = base_dir / "config.json"
+        def _pick_key(d: dict | None):
+            if not isinstance(d, dict):
+                return None
+            for _k in ("api_key", "apikey", "apiKey", "key", "token", "OPENROUTER_API_KEY"):
+                _v = d.get(_k)
+                if isinstance(_v, str) and _v.strip():
+                    return _v.strip()
+            return None
+        try:
+            if cfg_path.exists():
+                import json as _json
+                cfg = _json.loads(cfg_path.read_text(encoding="utf-8"))
+                effective_key = _pick_key(cfg.get("openrouter")) or _pick_key(cfg) or effective_key
+                if effective_key:
+                    log.info("Resolved API key from local config.json at %s", cfg_path)
+        except Exception as _e:
+            log.debug("Failed to read local config.json for API key: %s", _e)
     def _mask(k: str | None) -> str:
         if not k:
             return "<empty>"
