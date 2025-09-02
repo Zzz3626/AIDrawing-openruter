@@ -1,5 +1,5 @@
-from pkg.plugin.context import register, handler, llm_func, BasePlugin, APIHost, EventContext
-from pkg.plugin.events import *  # 导入事件
+﻿from pkg.plugin.context import register, handler, llm_func, BasePlugin, APIHost, EventContext
+from pkg.plugin.events import *  # 瀵煎叆浜嬩欢
 from pkg.platform.types import *
 import re
 import os
@@ -29,7 +29,7 @@ except Exception:
         else:
             raise ImportError("Cannot load local get_image.py")
 
-# 兼容不同宿主中事件类名差异：将 Normal* 名称映射到 Person*
+# 鍏煎涓嶅悓瀹夸富涓簨浠剁被鍚嶅樊寮傦細灏?Normal* 鍚嶇О鏄犲皠鍒?Person*
 try:
     NormalMessageReceived  # type: ignore[name-defined]
 except NameError:
@@ -47,8 +47,8 @@ except NameError:
         pass
 
 
-# 注册插件
-@register(name="AIDrawing", description="使用function calling函数实现AI画图的功能，并自带图像发送", version="0.1", author="Hanschase")
+# 娉ㄥ唽鎻掍欢
+@register(name="AIDrawing", description="浣跨敤function calling鍑芥暟瀹炵幇AI鐢诲浘鐨勫姛鑳斤紝骞惰嚜甯﹀浘鍍忓彂閫?, version="0.1", author="Hanschase")
 class Fct(BasePlugin):
     def __init__(self, host: APIHost):
         # setup file logger once
@@ -71,7 +71,7 @@ class Fct(BasePlugin):
             self._logger = logging.getLogger("AIDrawing")
             self._logger.setLevel(logging.DEBUG)
 
-        # 读取配置文件（与本文件同目录）config.json
+        # 璇诲彇閰嶇疆鏂囦欢锛堜笌鏈枃浠跺悓鐩綍锛塩onfig.json
         try:
             base_dir = os.path.dirname(__file__)
         except Exception:
@@ -92,8 +92,7 @@ class Fct(BasePlugin):
         try:
             if os.path.exists(cfg_path):
                 with open(cfg_path, 'r', encoding='utf-8') as f:
-                    # 浅合并配置
-                    user_cfg = json.load(f)
+                    # 娴呭悎骞堕厤缃?                    user_cfg = json.load(f)
                     def merge(dst, src):
                         for k, v in src.items():
                             if isinstance(v, dict) and isinstance(dst.get(k), dict):
@@ -117,7 +116,7 @@ class Fct(BasePlugin):
                 _open['api_key'] = _resolved_key
                 self.config['openrouter'] = _open
                 if hasattr(self, 'ap') and getattr(self, 'ap', None):
-                    self.ap.logger.info(f"OpenRouter API Key 已配置 (len={len(_resolved_key)}). 配置文件: {cfg_path}")
+                    self.ap.logger.info(f"OpenRouter API Key 宸查厤缃?(len={len(_resolved_key)}). 閰嶇疆鏂囦欢: {cfg_path}")
                 # also write to file log
                 try:
                     self._logger.info(f"API key detected via config/env. len={len(_resolved_key)}; cfg={cfg_path}")
@@ -125,20 +124,19 @@ class Fct(BasePlugin):
                     pass
             else:
                 if hasattr(self, 'ap') and getattr(self, 'ap', None):
-                    self.ap.logger.info(f"未在配置/环境中检测到 OpenRouter API Key。配置文件: {cfg_path}")
+                    self.ap.logger.info(f"鏈湪閰嶇疆/鐜涓娴嬪埌 OpenRouter API Key銆傞厤缃枃浠? {cfg_path}")
                 try:
                     self._logger.warning(f"No API key in config/env. cfg={cfg_path}")
                 except Exception:
                     pass
         except Exception as e:
             if hasattr(self, 'ap') and getattr(self, 'ap', None):
-                self.ap.logger.warning(f"读取配置失败，使用默认配置: {e}")
+                self.ap.logger.warning(f"璇诲彇閰嶇疆澶辫触锛屼娇鐢ㄩ粯璁ら厤缃? {e}")
             try:
                 self._logger.exception("Failed to load config.json: %s", e)
             except Exception:
                 pass
-        # 确保输出目录存在：将相对路径固定到插件目录（与 logs 同级）
-        storage_cfg = self.config.get('storage', {}) or {}
+        # 纭繚杈撳嚭鐩綍瀛樺湪锛氬皢鐩稿璺緞鍥哄畾鍒版彃浠剁洰褰曪紙涓?logs 鍚岀骇锛?        storage_cfg = self.config.get('storage', {}) or {}
         raw_out_dir = storage_cfg.get('output_dir') or 'generated'
         try:
             try:
@@ -146,13 +144,13 @@ class Fct(BasePlugin):
             except Exception:
                 _plugin_dir = os.getcwd()
             out_dir = raw_out_dir if os.path.isabs(raw_out_dir) else os.path.join(_plugin_dir, raw_out_dir)
-            # 回写标准化后的绝对路径，便于后续调用
+            # 鍥炲啓鏍囧噯鍖栧悗鐨勭粷瀵硅矾寰勶紝渚夸簬鍚庣画璋冪敤
             if isinstance(self.config.get('storage'), dict):
                 self.config['storage']['output_dir'] = out_dir
             os.makedirs(out_dir, exist_ok=True)
         except Exception as e:
             if hasattr(self, 'ap') and getattr(self, 'ap', None):
-                self.ap.logger.warning(f"创建输出目录失败，将使用当前目录: {e}")
+                self.ap.logger.warning(f"鍒涘缓杈撳嚭鐩綍澶辫触锛屽皢浣跨敤褰撳墠鐩綍: {e}")
             try:
                 self._logger.warning("Failed to create output dir '%s': %s", out_dir, e)
             except Exception:
@@ -172,7 +170,7 @@ class Fct(BasePlugin):
         Returns:
             img: The generated image.
         """
-        self.ap.logger.info(f"优化后关键词,{keywords}")
+        self.ap.logger.info(f"浼樺寲鍚庡叧閿瘝,{keywords}")
         cfg = self.config
         openrouter_cfg = cfg.get('openrouter', {})
         fallback_cfg = cfg.get('fallback', {})
@@ -220,55 +218,50 @@ class Fct(BasePlugin):
                 )
                 return f"file://{img_path}"
             except Exception as e:
-                self.ap.logger.warning(f"OpenRouter 生成失败，准备回退: {e}")
+                self.ap.logger.warning(f"OpenRouter 鐢熸垚澶辫触锛屽噯澶囧洖閫€: {e}")
                 try:
                     self._logger.warning("OpenRouter failed, will fallback: %s", e)
                 except Exception:
                     pass
 
-        # 回退
+        # 鍥為€€
         if fallback_cfg.get('enabled', True):
             return "https://image.pollinations.ai/prompt/" + keywords
-        # 若禁用回退，直接返回错误信息
-        return f"生成失败，且已禁用回退"
+        # 鑻ョ鐢ㄥ洖閫€锛岀洿鎺ヨ繑鍥為敊璇俊鎭?        return f"鐢熸垚澶辫触锛屼笖宸茬鐢ㄥ洖閫€"
 
-    # 发送图片
-    @handler(NormalMessageResponded)
+    # 鍙戦€佸浘鐗?    @handler(NormalMessageResponded)
     async def convert_message(self, ctx: EventContext):
         message = ctx.event.response_text
         image_pattern = re.compile(r'(https://image[^\s)]+)')
         file_pattern = re.compile(r'(file://[^\s)]+)')
-        # 如果匹配到了image_pattern
+        # 濡傛灉鍖归厤鍒颁簡image_pattern
         if image_pattern.search(message):
             url = image_pattern.search(message).group(1)
             try:
-                # 去除url末尾的句号或者括号
-                if url.endswith('.') or url.endswith(')'):
+                # 鍘婚櫎url鏈熬鐨勫彞鍙锋垨鑰呮嫭鍙?                if url.endswith('.') or url.endswith(')'):
                     url = url[:-1]
-                self.ap.logger.info(f"正在发送图片... {url}")
+                self.ap.logger.info(f"姝ｅ湪鍙戦€佸浘鐗?.. {url}")
                 ctx.add_return('reply', MessageChain([Image(url=url)]))
             except Exception as e:
-                await ctx.send_message(ctx.event.launcher_type, str(ctx.event.launcher_id), MessageChain([f"发生了一个错误：{e}"]))
+                await ctx.send_message(ctx.event.launcher_type, str(ctx.event.launcher_id), MessageChain([f"鍙戠敓浜嗕竴涓敊璇細{e}"]))
         elif file_pattern.search(message):
             file_url = file_pattern.search(message).group(1)
             # Strip file:// prefix
-            path = file_url.replace('file://', '')
+            path = file_url
             try:
-                self.ap.logger.info(f"正在发送本地图片... {path}")
-                ctx.add_return('reply', MessageChain([Image(url=file_url)]))
+                self.ap.logger.info(f"姝ｅ湪鍙戦€佹湰鍦板浘鐗?.. {path}")
+                ctx.add_return('reply', MessageChain([Image(path=path)]))
             except Exception as e:
-                await ctx.send_message(ctx.event.launcher_type, str(ctx.event.launcher_id), MessageChain([f"发生了一个错误：{e}"]))
+                await ctx.send_message(ctx.event.launcher_type, str(ctx.event.launcher_id), MessageChain([f"鍙戠敓浜嗕竴涓敊璇細{e}"]))
         else:
             return ctx.add_return('reply', message)
 
     def __del__(self):
         pass
 
-    # 解析 /p 指令并直接触发生图（不经过 function calling）
-    @handler(NormalMessageReceived)
+    # 瑙ｆ瀽 /p 鎸囦护骞剁洿鎺ヨЕ鍙戠敓鍥撅紙涓嶇粡杩?function calling锛?    @handler(NormalMessageReceived)
     async def handle_prompt_command(self, ctx: EventContext):
-        # 尝试从多种字段中获取文本，兼容不同平台事件结构
-        text = getattr(ctx.event, 'text', None) \
+        # 灏濊瘯浠庡绉嶅瓧娈典腑鑾峰彇鏂囨湰锛屽吋瀹逛笉鍚屽钩鍙颁簨浠剁粨鏋?        text = getattr(ctx.event, 'text', None) \
                or getattr(ctx.event, 'message', None) \
                or getattr(ctx.event, 'text_message', None) \
                or getattr(ctx.event, 'message_text', None) \
@@ -284,19 +277,19 @@ class Fct(BasePlugin):
         if not content:
             return
 
-        # 匹配配置中的指令前缀，例如 /p
-        # 支持空格、冒号、中英文标点
+        # 鍖归厤閰嶇疆涓殑鎸囦护鍓嶇紑锛屼緥濡?/p
+        # 鏀寔绌烘牸銆佸啋鍙枫€佷腑鑻辨枃鏍囩偣
         prefix = self.config.get('command_prefix', '/p') or '/p'
-        # 正则转义用户自定义前缀
+        # 姝ｅ垯杞箟鐢ㄦ埛鑷畾涔夊墠缂€
         import re as _re
         safe_prefix = _re.escape(prefix)
-        m = re.match(fr"^{safe_prefix}\s*[:：]?\s*(.+)$", content, flags=re.IGNORECASE)
+        m = re.match(fr"^{safe_prefix}\s*[:锛歖?\s*(.+)$", content, flags=re.IGNORECASE)
         if not m:
             return
 
         prompt = m.group(1).strip()
         if not prompt:
-            return ctx.add_return('reply', MessageChain([Plain('请输入绘图描述，例如 /p 一只在月球上的猫')]))
+            return ctx.add_return('reply', MessageChain([Plain('璇疯緭鍏ョ粯鍥炬弿杩帮紝渚嬪 /p 涓€鍙湪鏈堢悆涓婄殑鐚?)]))
 
         cfg = self.config
         openrouter_cfg = cfg.get('openrouter', {})
@@ -321,10 +314,11 @@ class Fct(BasePlugin):
                     model=openrouter_cfg.get('model', 'google/gemini-2.5-flash-image-preview:free') or 'google/gemini-2.5-flash-image-preview:free',
                     api_key=(_get_api_key(openrouter_cfg) or None),
                 )
-                self.ap.logger.info(f"{prefix} 生成完成，发送本地图片 {img_path}")
-                return ctx.add_return('reply', MessageChain([Image(url=f"file://{img_path}")]))
+                self.ap.logger.info(f"{prefix} 鐢熸垚瀹屾垚锛屽彂閫佹湰鍦板浘鐗?{img_path}")
+                # 传递带 file:// 的路径给 Image.path，兼容 go-cqhttp 要求
+                return ctx.add_return('reply', MessageChain([Image(path=f"file://{img_path}")]))
             except Exception as e:
-                self.ap.logger.warning(f"OpenRouter 生成失败，准备回退: {e}")
+                self.ap.logger.warning(f"OpenRouter 鐢熸垚澶辫触锛屽噯澶囧洖閫€: {e}")
                 try:
                     self._logger.warning("OpenRouter failed, will fallback: %s", e)
                 except Exception:
@@ -334,4 +328,5 @@ class Fct(BasePlugin):
             url = "https://image.pollinations.ai/prompt/" + prompt
             return ctx.add_return('reply', MessageChain([Image(url=url)]))
         else:
-            return ctx.add_return('reply', MessageChain([Plain('生成失败，且已禁用回退')]))
+            return ctx.add_return('reply', MessageChain([Plain('鐢熸垚澶辫触锛屼笖宸茬鐢ㄥ洖閫€')]))
+
