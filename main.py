@@ -1,10 +1,11 @@
 from pkg.plugin.context import register, handler, llm_func, BasePlugin, APIHost, EventContext
-from pkg.plugin.events import *  # 导入事件类
+from pkg.plugin.events import *  # 导入事件
 from pkg.platform.types import *
 import re
 import os
 import json
 import uuid
+
 # Prefer local get_image within this plugin; fall back gracefully
 try:
     # Relative import when package context is available
@@ -26,12 +27,29 @@ except Exception:
         else:
             raise ImportError("Cannot load local get_image.py")
 
+# 兼容不同宿主中事件类名差异：将 Normal* 名称映射到 Person*
+try:
+    NormalMessageReceived  # type: ignore[name-defined]
+except NameError:
+    try:
+        from pkg.plugin.events import PersonMessageReceived as NormalMessageReceived  # type: ignore
+    except Exception:
+        pass
+
+try:
+    NormalMessageResponded  # type: ignore[name-defined]
+except NameError:
+    try:
+        from pkg.plugin.events import PersonMessageResponded as NormalMessageResponded  # type: ignore
+    except Exception:
+        pass
+
 
 # 注册插件
 @register(name="AIDrawing", description="使用function calling函数实现AI画图的功能，并自带图像发送", version="0.1", author="Hanschase")
 class Fct(BasePlugin):
     def __init__(self, host: APIHost):
-        # 读取配置文件（与本文件同目录的 config.json）
+        # 读取配置文件（与本文件同目录）config.json
         try:
             base_dir = os.path.dirname(__file__)
         except Exception:
@@ -112,41 +130,41 @@ class Fct(BasePlugin):
         if fallback_cfg.get('enabled', True):
             return "https://image.pollinations.ai/prompt/" + keywords
         # 若禁用回退，直接返回错误信息
-        return f"生成失败，且已禁用回退。"
+        return f"生成失败，且已禁用回退"
 
-    #发送图片
+    # 发送图片
     @handler(NormalMessageResponded)
     async def convert_message(self, ctx: EventContext):
         message = ctx.event.response_text
         image_pattern = re.compile(r'(https://image[^\s)]+)')
         file_pattern = re.compile(r'(file://[^\s)]+)')
-        #如果匹配到了image_pattern
+        # 如果匹配到了image_pattern
         if image_pattern.search(message):
             url = image_pattern.search(message).group(1)
             try:
-                #去除url末尾的句号或者括号
+                # 去除url末尾的句号或者括号
                 if url.endswith('.') or url.endswith(')'):
                     url = url[:-1]
-                self.ap.logger.info(f"正在发送图片图片...{url}")
+                self.ap.logger.info(f"正在发送图片... {url}")
                 ctx.add_return('reply', MessageChain([Image(url=url)]))
             except Exception as e:
-                await ctx.send_message(ctx.event.launcher_type, str(ctx.event.launcher_id),MessageChain([f"发生了一个错误：{e}"]))
+                await ctx.send_message(ctx.event.launcher_type, str(ctx.event.launcher_id), MessageChain([f"发生了一个错误：{e}"]))
         elif file_pattern.search(message):
             file_url = file_pattern.search(message).group(1)
             # Strip file:// prefix
             path = file_url.replace('file://', '')
             try:
-                self.ap.logger.info(f"正在发送本地图片...{path}")
+                self.ap.logger.info(f"正在发送本地图片... {path}")
                 ctx.add_return('reply', MessageChain([Image(path=path)]))
             except Exception as e:
-                await ctx.send_message(ctx.event.launcher_type, str(ctx.event.launcher_id),MessageChain([f"发生了一个错误：{e}"]))
+                await ctx.send_message(ctx.event.launcher_type, str(ctx.event.launcher_id), MessageChain([f"发生了一个错误：{e}"]))
         else:
             return ctx.add_return('reply', message)
 
     def __del__(self):
         pass
 
-    # 解析 /p 指令并直接触发生图（不经由 function calling）
+    # 解析 /p 指令并直接触发生图（不经过 function calling）
     @handler(NormalMessageReceived)
     async def handle_prompt_command(self, ctx: EventContext):
         # 尝试从多种字段中获取文本，兼容不同平台事件结构
@@ -178,7 +196,7 @@ class Fct(BasePlugin):
 
         prompt = m.group(1).strip()
         if not prompt:
-            return ctx.add_return('reply', MessageChain([Plain('请输入绘图描述，例如：/p 一只在月球上的猫')]))
+            return ctx.add_return('reply', MessageChain([Plain('请输入绘图描述，例如 /p 一只在月球上的猫')]))
 
         cfg = self.config
         openrouter_cfg = cfg.get('openrouter', {})
@@ -197,7 +215,7 @@ class Fct(BasePlugin):
                     model=openrouter_cfg.get('model', 'google/gemini-2.5-flash-image-preview:free') or 'google/gemini-2.5-flash-image-preview:free',
                     api_key=(openrouter_cfg.get('api_key') or None),
                 )
-                self.ap.logger.info(f"{prefix} 生成完成，发送本地图片: {img_path}")
+                self.ap.logger.info(f"{prefix} 生成完成，发送本地图片 {img_path}")
                 return ctx.add_return('reply', MessageChain([Image(path=img_path)]))
             except Exception as e:
                 self.ap.logger.warning(f"OpenRouter 生成失败，准备回退: {e}")
@@ -206,4 +224,5 @@ class Fct(BasePlugin):
             url = "https://image.pollinations.ai/prompt/" + prompt
             return ctx.add_return('reply', MessageChain([Image(url=url)]))
         else:
-            return ctx.add_return('reply', MessageChain([Plain('生成失败，且已禁用回退。')]))
+            return ctx.add_return('reply', MessageChain([Plain('生成失败，且已禁用回退')]))
+

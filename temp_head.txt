@@ -1,0 +1,15 @@
+from pkg.plugin.context import register, handler, llm_func, BasePlugin, APIHost, EventContext
+from pkg.plugin.events import *  # 导入事件�?from pkg.platform.types import *
+import re
+import os
+import json
+import uuid
+# Prefer local get_image within this plugin; fall back gracefully
+try:
+    # Relative import when package context is available
+    from .get_image import generate_image_with_openrouter  # type: ignore
+except Exception:
+    try:
+        # Direct import if executed as a flat module
+        from get_image import generate_image_with_openrouter  # type: ignore
+    except Exception:
