@@ -289,7 +289,7 @@ class Fct(BasePlugin):
         # 1) 检测“图片已生成: 本地路径”
         m = generated_image_pattern.search(message)
         if m:
-            path = m.group(1)
+            path = (m.group(1) or '').strip().strip('"').strip("'")
             try:
                 self.ap.logger.info(f"检测到生成的图片，正在发送.. {path}")
                 if os.path.exists(path):
@@ -308,7 +308,7 @@ class Fct(BasePlugin):
         # 2) Markdown 图片
         m = markdown_image_pattern.search(message)
         if m:
-            path = m.group(1)
+            path = (m.group(1) or '').strip().strip('"').strip("'")
             try:
                 self.ap.logger.info(f"正在发送本地图片.. {path}")
                 if os.path.exists(path):
@@ -340,8 +340,9 @@ class Fct(BasePlugin):
         # 4) file:// URL（将其解析成本地路径再发送）
         m = file_pattern.search(message)
         if m:
-            file_url = m.group(1)
+            file_url = (m.group(1) or '').strip()
             path = file_url[7:] if file_url.startswith('file://') else file_url
+            path = path.strip().strip('"').strip("'")
             try:
                 self.ap.logger.info(f"正在发送本地图片.. {path}")
                 if os.path.exists(path):
@@ -459,7 +460,7 @@ class Fct(BasePlugin):
                     api_key=(_get_api_key(openrouter_cfg) or None),
                 )
                 self.ap.logger.info(f"{prefix} 生成完成，发送本地图片: {img_path}")
-                # 构造跨平台 file:// URI（本地定义，避免作用域问题）
+                # 使用 file:// URI 发送，适配 aiocqhttp 对 URL 识别
                 def _to_file_uri(p: str) -> str:
                     ap = os.path.abspath(p)
                     if os.name == 'nt':
@@ -469,7 +470,6 @@ class Fct(BasePlugin):
                         return f"file://{ap}"
                     else:
                         return f"file://{ap}"
-                # 优先使用 file:// URI 发送
                 try:
                     file_uri = _to_file_uri(img_path)
                     return ctx.add_return('reply', MessageChain([Image(url=file_uri)]))
