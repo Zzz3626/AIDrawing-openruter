@@ -142,14 +142,14 @@ class Fct(BasePlugin):
                 self._logger.exception("Failed to load config.json: %s", e)
             except Exception:
                 pass
-        # 确保输出目录存在：将相对路径固定到插件目录（与 logs 同级）
+        # 确保输出目录存在：将相对路径固定到插件目录（与 logs 同级），并记录最终绝对路径
         storage_cfg = self.config.get('storage', {}) or {}
         raw_out_dir = storage_cfg.get('output_dir') or 'generated'
         try:
             # 调试：打印配置加载情况
             self._logger.info(f"Config loaded - storage config: {storage_cfg}")
             self._logger.info(f"Raw output dir from config: {raw_out_dir}")
-            
+
             try:
                 _plugin_dir = os.path.dirname(__file__)
             except Exception:
@@ -189,12 +189,15 @@ class Fct(BasePlugin):
         cfg = self.config
         openrouter_cfg = cfg.get('openrouter', {})
         fallback_cfg = cfg.get('fallback', {})
-        # 强制使用绝对路径，确保一致性
+        # 使用在 __init__ 中标准化后的绝对路径；若缺失则退回到当前文件同目录 generated
         configured_dir = cfg.get('storage', {}).get('output_dir')
-        if configured_dir and os.path.isabs(configured_dir):
-            out_dir = configured_dir
-        else:
-            out_dir = '/root/LangBot/plugins/AIDrawing-openruter/generated'
+        if not configured_dir:
+            try:
+                _plugin_dir = os.path.dirname(__file__)
+            except Exception:
+                _plugin_dir = os.getcwd()
+            configured_dir = os.path.join(_plugin_dir, 'generated')
+        out_dir = configured_dir
         
         # 调试信息：打印实际使用的路径
         try:
@@ -263,71 +266,99 @@ class Fct(BasePlugin):
     # 发送图片
     @handler(NormalMessageResponded)
     async def convert_message(self, ctx: EventContext):
-        message = ctx.event.response_text
+        message = getattr(ctx.event, 'response_text', '') or ''
+
+        # 构造跨平台 file:// URI
+        def _to_file_uri(p: str) -> str:
+            ap = os.path.abspath(p)
+            if os.name == 'nt':
+                ap = ap.replace('\\', '/')
+                if not ap.startswith('/'):
+                    ap = '/' + ap
+                return f"file://{ap}"
+            else:
+                return f"file://{ap}"
+
         image_pattern = re.compile(r'(https://image[^\s)]+)')
         file_pattern = re.compile(r'(file://[^\s)]+)')
         # 修复正则表达式：匹配 ![](path) 或 ![图片](path) 格式
         markdown_image_pattern = re.compile(r'!\[[^\]]*\]\(([^)]+)\)')
-        # 添加对 "图片已生成: 路径" 格式的检测
-        generated_image_pattern = re.compile(r'图片已生成:\s*([/\w\-_.]+\.(?:png|jpg|jpeg|gif|webp))', re.IGNORECASE)
-        
-        # 检查是否包含生成的图片路径
-        if generated_image_pattern.search(message):
-            path = generated_image_pattern.search(message).group(1)
+        # 添加对 "图片已生成: 路径" 格式的检测（支持 Windows 盘符与反斜杠）
+        generated_image_pattern = re.compile(r'图片已生成:\s*([A-Za-z]:\\[^\n\r]*?\.(?:png|jpg|jpeg|gif|webp)|/[^\n\r]*?\.(?:png|jpg|jpeg|gif|webp))', re.IGNORECASE)
+
+        # 1) 检测“图片已生成: 本地路径”
+        m = generated_image_pattern.search(message)
+        if m:
+            path = m.group(1)
             try:
                 self.ap.logger.info(f"检测到生成的图片，正在发送.. {path}")
-                # 检查文件是否存在
                 if os.path.exists(path):
-                    ctx.add_return('reply', MessageChain([Image(path=path)]))
+                    file_uri = _to_file_uri(path)
+                    try:
+                        ctx.add_return('reply', MessageChain([Image(url=file_uri)]))
+                    except Exception:
+                        ctx.add_return('reply', MessageChain([Image(path=path)]))
                 else:
                     self.ap.logger.warning(f"生成的图片文件不存在: {path}")
                     ctx.add_return('reply', MessageChain([Plain(f"图片文件不存在: {path}")]))
             except Exception as e:
                 await ctx.send_message(ctx.event.launcher_type, str(ctx.event.launcher_id), MessageChain([f"发生了一个错误：{e}"]))
-                return
-        # 如果匹配到了markdown图片格式 ![](path) 或 ![图片](path)
-        elif markdown_image_pattern.search(message):
-            path = markdown_image_pattern.search(message).group(1)
+            return
+
+        # 2) Markdown 图片
+        m = markdown_image_pattern.search(message)
+        if m:
+            path = m.group(1)
             try:
                 self.ap.logger.info(f"正在发送本地图片.. {path}")
-                # 检查文件是否存在
                 if os.path.exists(path):
-                    ctx.add_return('reply', MessageChain([Image(path=path)]))
+                    file_uri = _to_file_uri(path)
+                    try:
+                        ctx.add_return('reply', MessageChain([Image(url=file_uri)]))
+                    except Exception:
+                        ctx.add_return('reply', MessageChain([Image(path=path)]))
                 else:
                     self.ap.logger.warning(f"图片文件不存在: {path}")
                     ctx.add_return('reply', MessageChain([Plain(f"图片文件不存在: {path}")]))
             except Exception as e:
                 await ctx.send_message(ctx.event.launcher_type, str(ctx.event.launcher_id), MessageChain([f"发生了一个错误：{e}"]))
-                return
-        elif image_pattern.search(message):
-            url = image_pattern.search(message).group(1)
+            return
+
+        # 3) 远程图片 URL
+        m = image_pattern.search(message)
+        if m:
+            url = m.group(1)
             try:
-                # 去除url末尾的句号或者括号
                 if url.endswith('.') or url.endswith(')'):
                     url = url[:-1]
                 self.ap.logger.info(f"正在发送图片.. {url}")
                 ctx.add_return('reply', MessageChain([Image(url=url)]))
             except Exception as e:
                 await ctx.send_message(ctx.event.launcher_type, str(ctx.event.launcher_id), MessageChain([f"发生了一个错误：{e}"]))
-        elif file_pattern.search(message):
-            file_url = file_pattern.search(message).group(1)
-            # Strip file:// prefix and get actual file path
-            if file_url.startswith('file://'):
-                path = file_url[7:]  # Remove 'file://' prefix
-            else:
-                path = file_url
+            return
+
+        # 4) file:// URL（将其解析成本地路径再发送）
+        m = file_pattern.search(message)
+        if m:
+            file_url = m.group(1)
+            path = file_url[7:] if file_url.startswith('file://') else file_url
             try:
                 self.ap.logger.info(f"正在发送本地图片.. {path}")
-                # Check if file exists before sending
                 if os.path.exists(path):
-                    ctx.add_return('reply', MessageChain([Image(path=path)]))
+                    file_uri = _to_file_uri(path)
+                    try:
+                        ctx.add_return('reply', MessageChain([Image(url=file_uri)]))
+                    except Exception:
+                        ctx.add_return('reply', MessageChain([Image(path=path)]))
                 else:
                     self.ap.logger.warning(f"图片文件不存在: {path}")
                     ctx.add_return('reply', MessageChain([Plain(f"图片文件不存在: {path}")]))
             except Exception as e:
                 await ctx.send_message(ctx.event.launcher_type, str(ctx.event.launcher_id), MessageChain([f"发生了一个错误：{e}"]))
-        else:
-            return ctx.add_return('reply', message)
+            return
+
+        # 5) 默认：直接回传文本
+        return ctx.add_return('reply', message)
 
     def __del__(self):
         pass
@@ -369,12 +400,15 @@ class Fct(BasePlugin):
         cfg = self.config
         openrouter_cfg = cfg.get('openrouter', {})
         fallback_cfg = cfg.get('fallback', {})
-        # 强制使用绝对路径，确保一致性
+        # 使用在 __init__ 中标准化后的绝对路径；若缺失则退回到当前文件同目录 generated
         configured_dir = cfg.get('storage', {}).get('output_dir')
-        if configured_dir and os.path.isabs(configured_dir):
-            out_dir = configured_dir
-        else:
-            out_dir = '/root/LangBot/plugins/AIDrawing-openruter/generated'
+        if not configured_dir:
+            try:
+                _plugin_dir = os.path.dirname(__file__)
+            except Exception:
+                _plugin_dir = os.getcwd()
+            configured_dir = os.path.join(_plugin_dir, 'generated')
+        out_dir = configured_dir
 
         # 调试信息：打印实际使用的路径
         try:
@@ -425,8 +459,22 @@ class Fct(BasePlugin):
                     api_key=(_get_api_key(openrouter_cfg) or None),
                 )
                 self.ap.logger.info(f"{prefix} 生成完成，发送本地图片: {img_path}")
-                # 直接传递绝对路径给 Image.path，不使用 file:// 前缀
-                return ctx.add_return('reply', MessageChain([Image(path=img_path)]))
+                # 构造跨平台 file:// URI（本地定义，避免作用域问题）
+                def _to_file_uri(p: str) -> str:
+                    ap = os.path.abspath(p)
+                    if os.name == 'nt':
+                        ap = ap.replace('\\', '/')
+                        if not ap.startswith('/'):
+                            ap = '/' + ap
+                        return f"file://{ap}"
+                    else:
+                        return f"file://{ap}"
+                # 优先使用 file:// URI 发送
+                try:
+                    file_uri = _to_file_uri(img_path)
+                    return ctx.add_return('reply', MessageChain([Image(url=file_uri)]))
+                except Exception:
+                    return ctx.add_return('reply', MessageChain([Image(path=img_path)]))
             except Exception as e:
                 self.ap.logger.warning(f"OpenRouter 生成失败，准备回退: {e}")
                 try:

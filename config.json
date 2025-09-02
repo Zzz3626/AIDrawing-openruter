@@ -8,7 +8,7 @@
     "site_title": ""
   },
   "storage": {
-    "output_dir": "/root/LangBot/plugins/AIDrawing-openruter/generated"
+  "output_dir": "generated"
   },
   "fallback": {
     "enabled": true,
