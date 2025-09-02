@@ -1,4 +1,4 @@
-﻿from pkg.plugin.context import register, handler, llm_func, BasePlugin, APIHost, EventContext
+from pkg.plugin.context import register, handler, llm_func, BasePlugin, APIHost, EventContext
 from pkg.plugin.events import *  # 导入事件
 from pkg.platform.types import *
 import re
@@ -146,6 +146,10 @@ class Fct(BasePlugin):
         storage_cfg = self.config.get('storage', {}) or {}
         raw_out_dir = storage_cfg.get('output_dir') or 'generated'
         try:
+            # 调试：打印配置加载情况
+            self._logger.info(f"Config loaded - storage config: {storage_cfg}")
+            self._logger.info(f"Raw output dir from config: {raw_out_dir}")
+            
             try:
                 _plugin_dir = os.path.dirname(__file__)
             except Exception:
@@ -155,6 +159,10 @@ class Fct(BasePlugin):
             if isinstance(self.config.get('storage'), dict):
                 self.config['storage']['output_dir'] = out_dir
             os.makedirs(out_dir, exist_ok=True)
+            # 记录配置的路径信息
+            self._logger.info(f"Output directory configured: {out_dir}")
+            if hasattr(self, 'ap') and getattr(self, 'ap', None):
+                self.ap.logger.info(f"图片输出目录已设置为: {out_dir}")
         except Exception as e:
             if hasattr(self, 'ap') and getattr(self, 'ap', None):
                 self.ap.logger.warning(f"创建输出目录失败，将使用当前目录: {e}")
@@ -181,7 +189,19 @@ class Fct(BasePlugin):
         cfg = self.config
         openrouter_cfg = cfg.get('openrouter', {})
         fallback_cfg = cfg.get('fallback', {})
-        out_dir = cfg.get('storage', {}).get('output_dir') or 'generated'
+        # 强制使用绝对路径，确保一致性
+        configured_dir = cfg.get('storage', {}).get('output_dir')
+        if configured_dir and os.path.isabs(configured_dir):
+            out_dir = configured_dir
+        else:
+            out_dir = '/root/LangBot/plugins/AIDrawing-openruter/generated'
+        
+        # 调试信息：打印实际使用的路径
+        try:
+            self._logger.info(f"Function calling - configured_dir: {configured_dir}, using out_dir: {out_dir}")
+            self.ap.logger.info(f"Function calling - 使用输出目录: {out_dir}")
+        except Exception:
+            pass
 
         # Helper to robustly extract API key from config/root/env
         def _get_api_key(openrouter_dict, root_cfg=self.config):
@@ -206,6 +226,8 @@ class Fct(BasePlugin):
 
         if openrouter_cfg.get('enabled', True):
             try:
+                # 确保输出目录存在
+                os.makedirs(out_dir, exist_ok=True)
                 filename = f"drawer_{uuid.uuid4().hex}.png"
                 out_path = os.path.join(out_dir, filename)
                 try:
@@ -223,7 +245,7 @@ class Fct(BasePlugin):
                     model=openrouter_cfg.get('model', 'google/gemini-2.5-flash-image-preview:free') or 'google/gemini-2.5-flash-image-preview:free',
                     api_key=(_get_api_key(openrouter_cfg) or None),
                 )
-                return f"file://{img_path}"
+                return f"![图片]({img_path})"
             except Exception as e:
                 self.ap.logger.warning(f"OpenRouter 生成失败，准备回退: {e}")
                 try:
@@ -243,8 +265,23 @@ class Fct(BasePlugin):
         message = ctx.event.response_text
         image_pattern = re.compile(r'(https://image[^\s)]+)')
         file_pattern = re.compile(r'(file://[^\s)]+)')
+        markdown_image_pattern = re.compile(r'!\[图片\]\(([^)]+)\)')
+        
+        # 如果匹配到了markdown图片格式 ![图片](path)
+        if markdown_image_pattern.search(message):
+            path = markdown_image_pattern.search(message).group(1)
+            try:
+                self.ap.logger.info(f"正在发送本地图片.. {path}")
+                # 检查文件是否存在
+                if os.path.exists(path):
+                    ctx.add_return('reply', MessageChain([Image(path=path)]))
+                else:
+                    self.ap.logger.warning(f"图片文件不存在: {path}")
+                    ctx.add_return('reply', MessageChain([Plain(f"图片文件不存在: {path}")]))
+            except Exception as e:
+                await ctx.send_message(ctx.event.launcher_type, str(ctx.event.launcher_id), MessageChain([f"发生了一个错误：{e}"]))
         # 如果匹配到了image_pattern
-        if image_pattern.search(message):
+        elif image_pattern.search(message):
             url = image_pattern.search(message).group(1)
             try:
                 # 去除url末尾的句号或者括号
@@ -256,11 +293,19 @@ class Fct(BasePlugin):
                 await ctx.send_message(ctx.event.launcher_type, str(ctx.event.launcher_id), MessageChain([f"发生了一个错误：{e}"]))
         elif file_pattern.search(message):
             file_url = file_pattern.search(message).group(1)
-            # Strip file:// prefix
-            path = file_url
+            # Strip file:// prefix and get actual file path
+            if file_url.startswith('file://'):
+                path = file_url[7:]  # Remove 'file://' prefix
+            else:
+                path = file_url
             try:
                 self.ap.logger.info(f"正在发送本地图片.. {path}")
-                ctx.add_return('reply', MessageChain([Image(path=path)]))
+                # Check if file exists before sending
+                if os.path.exists(path):
+                    ctx.add_return('reply', MessageChain([Image(path=path)]))
+                else:
+                    self.ap.logger.warning(f"图片文件不存在: {path}")
+                    ctx.add_return('reply', MessageChain([Plain(f"图片文件不存在: {path}")]))
             except Exception as e:
                 await ctx.send_message(ctx.event.launcher_type, str(ctx.event.launcher_id), MessageChain([f"发生了一个错误：{e}"]))
         else:
@@ -306,7 +351,19 @@ class Fct(BasePlugin):
         cfg = self.config
         openrouter_cfg = cfg.get('openrouter', {})
         fallback_cfg = cfg.get('fallback', {})
-        out_dir = cfg.get('storage', {}).get('output_dir') or 'generated'
+        # 强制使用绝对路径，确保一致性
+        configured_dir = cfg.get('storage', {}).get('output_dir')
+        if configured_dir and os.path.isabs(configured_dir):
+            out_dir = configured_dir
+        else:
+            out_dir = '/root/LangBot/plugins/AIDrawing-openruter/generated'
+
+        # 调试信息：打印实际使用的路径
+        try:
+            self._logger.info(f"Direct command - configured_dir: {configured_dir}, using out_dir: {out_dir}")
+            self.ap.logger.info(f"Direct command - 使用输出目录: {out_dir}")
+        except Exception:
+            pass
 
         # Helper to robustly extract API key from config/root/env
         def _get_api_key(openrouter_dict, root_cfg=self.config):
@@ -331,6 +388,8 @@ class Fct(BasePlugin):
 
         if openrouter_cfg.get('enabled', True):
             try:
+                # 确保输出目录存在
+                os.makedirs(out_dir, exist_ok=True)
                 filename = f"drawer_{uuid.uuid4().hex}.png"
                 out_path = os.path.join(out_dir, filename)
                 try:
@@ -348,8 +407,8 @@ class Fct(BasePlugin):
                     api_key=(_get_api_key(openrouter_cfg) or None),
                 )
                 self.ap.logger.info(f"{prefix} 生成完成，发送本地图片: {img_path}")
-                # 传递带 file:// 的路径给 Image.path，兼容 go-cqhttp 要求
-                return ctx.add_return('reply', MessageChain([Image(path=f"file://{img_path}")]))
+                # 直接传递绝对路径给 Image.path，不使用 file:// 前缀
+                return ctx.add_return('reply', MessageChain([Image(path=img_path)]))
             except Exception as e:
                 self.ap.logger.warning(f"OpenRouter 生成失败，准备回退: {e}")
                 try:
