@@ -10,6 +10,11 @@ import re
 _logger = None
 
 
+def _safe_path(path: str) -> str:
+    """返回安全的文件路径，避免在不同操作系统上的路径问题"""
+    return path if os.path.isabs(path) else os.path.abspath(path)
+
+
 def _get_logger() -> logging.Logger:
     global _logger
     if _logger is not None:
@@ -178,9 +183,9 @@ async def generate_image_with_openrouter(
                                 data = base64.b64decode(b64v)
                                 with open(out_path, "wb") as f:
                                     f.write(data)
-                                abs_path = os.path.abspath(out_path)
-                                log.info(f"Saved image b64 to {abs_path}")
-                                return abs_path
+                                final_path = _safe_path(out_path)
+                                log.info(f"Saved image b64 to {final_path}")
+                                return final_path
                             except Exception as _e:
                                 log.debug("Base64 decode candidate failed: %s", _e)
                     # Nested source shapes e.g. {source:{data,url,media_type}}
@@ -197,9 +202,9 @@ async def generate_image_with_openrouter(
                                     data = base64.b64decode(b64v)
                                     with open(out_path, "wb") as f:
                                         f.write(data)
-                                    abs_path = os.path.abspath(out_path)
-                                    log.info(f"Saved image b64 (source) to {abs_path}")
-                                    return abs_path
+                                    final_path = _safe_path(out_path)
+                                    log.info(f"Saved image b64 (source) to {final_path}")
+                                    return final_path
                                 except Exception as _e:
                                     log.debug("Base64 (source) decode failed: %s", _e)
                         url = src.get("url")
@@ -249,9 +254,9 @@ async def generate_image_with_openrouter(
                                     data = base64.b64decode(b64v)
                                     with open(out_path, "wb") as f:
                                         f.write(data)
-                                    abs_path = os.path.abspath(out_path)
-                                    log.info(f"Saved image b64 (attachment) to {abs_path}")
-                                    return abs_path
+                                    final_path = _safe_path(out_path)
+                                    log.info(f"Saved image b64 (attachment) to {final_path}")
+                                    return final_path
                                 except Exception as _e:
                                     log.debug("Attachment base64 decode failed: %s", _e)
                         u = att.get("url") or att.get("image_url")
@@ -315,7 +320,7 @@ async def generate_image_with_openrouter(
                                             b64v = url[comma + 1 :]
                                             with open(out_path, "wb") as f:
                                                 f.write(base64.b64decode(b64v))
-                                            return os.path.abspath(out_path)
+                                            return _safe_path(out_path)
                                     except Exception as _e:
                                         log.debug("Part url data URI decode failed: %s", _e)
                             # nested source
@@ -334,7 +339,7 @@ async def generate_image_with_openrouter(
                                                     b64v = b64v[comma + 1 :]
                                             with open(out_path, "wb") as f:
                                                 f.write(base64.b64decode(b64v))
-                                            return os.path.abspath(out_path)
+                                            return _safe_path(out_path)
                                         except Exception as _e:
                                             log.debug("Part source base64 decode failed: %s", _e)
                     txt = part.get("text") or part.get("input_text") or ""
@@ -386,9 +391,9 @@ async def generate_image_with_openrouter(
             img_bytes = base64.b64decode(data_uri_match.group(1))
             with open(out_path, "wb") as f:
                 f.write(img_bytes)
-            abs_path = os.path.abspath(out_path)
-            log.info(f"Saved image from data URI to {abs_path}")
-            return abs_path
+            final_path = _safe_path(out_path)
+            log.info(f"Saved image from data URI to {final_path}")
+            return final_path
         url_match = re.search(r"https?://\S+", content)
         if url_match:
             url = url_match.group(0)
@@ -421,7 +426,7 @@ async def generate_image_with_openrouter(
                 if m:
                     with open(out_path, "wb") as f:
                         f.write(base64.b64decode(m.group(1)))
-                    return os.path.abspath(out_path)
+                    return _safe_path(out_path)
             except Exception as _e:
                 log.debug("Responses JSON scan failed: %s", _e)
     except Exception as e:
