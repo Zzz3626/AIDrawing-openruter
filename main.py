@@ -269,55 +269,39 @@ class Fct(BasePlugin):
     async def convert_message(self, ctx: EventContext):
         message = getattr(ctx.event, 'response_text', '') or ''
 
-        # 构造跨平台 file:// URI
-        def _to_file_uri(p: str) -> str:
-            ap = os.path.abspath(p)
-            if os.name == 'nt':
-                ap = ap.replace('\\', '/')
-                if not ap.startswith('/'):
-                    ap = '/' + ap
-                return f"file://{ap}"
-            else:
-                return f"file://{ap}"
-
+        # 正则
         image_pattern = re.compile(r'(https://image[^\s)]+)')
         file_pattern = re.compile(r'(file://[^\s)]+)')
-        # 修复正则表达式：匹配 ![](path) 或 ![图片](path) 格式
         markdown_image_pattern = re.compile(r'!\[[^\]]*\]\(([^)]+)\)')
-        # 添加对 "图片已生成: 路径" 格式的检测（支持 Windows 盘符与反斜杠）
         generated_image_pattern = re.compile(r'图片已生成:\s*([A-Za-z]:\\[^\n\r]*?\.(?:png|jpg|jpeg|gif|webp)|/[^\n\r]*?\.(?:png|jpg|jpeg|gif|webp))', re.IGNORECASE)
 
-        # 1) 检测“图片已生成: 本地路径”
+        def _sanitize_path(p: str) -> str:
+            p = (p or '').strip().strip('"').strip("'")
+            return os.path.abspath(p)
+
+        # 1) “图片已生成: 本地路径”
         m = generated_image_pattern.search(message)
         if m:
-            path = (m.group(1) or '').strip().strip('"').strip("'")
+            path = _sanitize_path(m.group(1))
             try:
                 self.ap.logger.info(f"检测到生成的图片，正在发送.. {path}")
                 if os.path.exists(path):
-                    with open(path, 'rb') as _f:
-                        b64 = base64.b64encode(_f.read()).decode('ascii')
-                    b64_uri = f"base64://{b64}"
-                    ctx.add_return('reply', MessageChain([Image(url=b64_uri)]))
+                    ctx.add_return('reply', MessageChain([Image(path=path)]))
                 else:
-                    self.ap.logger.warning(f"生成的图片文件不存在: {path}")
                     ctx.add_return('reply', MessageChain([Plain(f"图片文件不存在: {path}")]))
             except Exception as e:
                 await ctx.send_message(ctx.event.launcher_type, str(ctx.event.launcher_id), MessageChain([f"发生了一个错误：{e}"]))
             return
 
-        # 2) Markdown 图片
+        # 2) Markdown 本地图片
         m = markdown_image_pattern.search(message)
         if m:
-            path = (m.group(1) or '').strip().strip('"').strip("'")
+            path = _sanitize_path(m.group(1))
             try:
                 self.ap.logger.info(f"正在发送本地图片.. {path}")
                 if os.path.exists(path):
-                    with open(path, 'rb') as _f:
-                        b64 = base64.b64encode(_f.read()).decode('ascii')
-                    b64_uri = f"base64://{b64}"
-                    ctx.add_return('reply', MessageChain([Image(url=b64_uri)]))
+                    ctx.add_return('reply', MessageChain([Image(path=path)]))
                 else:
-                    self.ap.logger.warning(f"图片文件不存在: {path}")
                     ctx.add_return('reply', MessageChain([Plain(f"图片文件不存在: {path}")]))
             except Exception as e:
                 await ctx.send_message(ctx.event.launcher_type, str(ctx.event.launcher_id), MessageChain([f"发生了一个错误：{e}"]))
@@ -336,21 +320,17 @@ class Fct(BasePlugin):
                 await ctx.send_message(ctx.event.launcher_type, str(ctx.event.launcher_id), MessageChain([f"发生了一个错误：{e}"]))
             return
 
-        # 4) file:// URL（将其解析成本地路径再发送）
+        # 4) file:// URL -> 转成本地路径
         m = file_pattern.search(message)
         if m:
             file_url = (m.group(1) or '').strip()
             path = file_url[7:] if file_url.startswith('file://') else file_url
-            path = path.strip().strip('"').strip("'")
+            path = _sanitize_path(path)
             try:
                 self.ap.logger.info(f"正在发送本地图片.. {path}")
                 if os.path.exists(path):
-                    with open(path, 'rb') as _f:
-                        b64 = base64.b64encode(_f.read()).decode('ascii')
-                    b64_uri = f"base64://{b64}"
-                    ctx.add_return('reply', MessageChain([Image(url=b64_uri)]))
+                    ctx.add_return('reply', MessageChain([Image(path=path)]))
                 else:
-                    self.ap.logger.warning(f"图片文件不存在: {path}")
                     ctx.add_return('reply', MessageChain([Plain(f"图片文件不存在: {path}")]))
             except Exception as e:
                 await ctx.send_message(ctx.event.launcher_type, str(ctx.event.launcher_id), MessageChain([f"发生了一个错误：{e}"]))
@@ -458,21 +438,8 @@ class Fct(BasePlugin):
                     api_key=(_get_api_key(openrouter_cfg) or None),
                 )
                 self.ap.logger.info(f"{prefix} 生成完成，发送本地图片: {img_path}")
-                # 使用 file:// URI 发送，适配 aiocqhttp 对 URL 识别
-                def _to_file_uri(p: str) -> str:
-                    ap = os.path.abspath(p)
-                    if os.name == 'nt':
-                        ap = ap.replace('\\', '/')
-                        if not ap.startswith('/'):
-                            ap = '/' + ap
-                        return f"file://{ap}"
-                    else:
-                        return f"file://{ap}"
-                try:
-                    file_uri = _to_file_uri(img_path)
-                    return ctx.add_return('reply', MessageChain([Image(url=file_uri)]))
-                except Exception:
-                    return ctx.add_return('reply', MessageChain([Image(path=img_path)]))
+                # 直接以本地文件路径发送，避免 URL 校验与长度限制
+                return ctx.add_return('reply', MessageChain([Image(path=os.path.abspath(img_path))]))
             except Exception as e:
                 self.ap.logger.warning(f"OpenRouter 生成失败，准备回退: {e}")
                 try:
