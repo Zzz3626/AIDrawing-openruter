@@ -3,7 +3,7 @@
   "openrouter": {
     "enabled": true,
     "model": "google/gemini-2.5-flash-image-preview:free",
-    "api_key": "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", 
+    "api_key": "", 
     "site_url": "",
     "site_title": ""
   },
