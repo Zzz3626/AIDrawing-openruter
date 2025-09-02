@@ -48,7 +48,12 @@ except NameError:
 
 
 # 娉ㄥ唽鎻掍欢
-@register(name="AIDrawing", description="浣跨敤function calling鍑芥暟瀹炵幇AI鐢诲浘鐨勫姛鑳斤紝骞惰嚜甯﹀浘鍍忓彂閫?, version="0.1", author="Hanschase")
+@register(
+    name="AIDrawing",
+    description="AI image generation via function calling, with image sending",
+    version="0.1",
+    author="Hanschase",
+)
 class Fct(BasePlugin):
     def __init__(self, host: APIHost):
         # setup file logger once
@@ -329,4 +334,5 @@ class Fct(BasePlugin):
             return ctx.add_return('reply', MessageChain([Image(url=url)]))
         else:
             return ctx.add_return('reply', MessageChain([Plain('鐢熸垚澶辫触锛屼笖宸茬鐢ㄥ洖閫€')]))
+
 
