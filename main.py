@@ -5,7 +5,26 @@ import re
 import os
 import json
 import uuid
-from plugins.AIDrawing.get_image import generate_image_with_openrouter
+# Prefer local get_image within this plugin; fall back gracefully
+try:
+    # Relative import when package context is available
+    from .get_image import generate_image_with_openrouter  # type: ignore
+except Exception:
+    try:
+        # Direct import if executed as a flat module
+        from get_image import generate_image_with_openrouter  # type: ignore
+    except Exception:
+        # Last resort: load by path to handle non-standard plugin loaders
+        import importlib.util
+        import pathlib
+        _base_dir = pathlib.Path(__file__).parent
+        _spec = importlib.util.spec_from_file_location("get_image", _base_dir / "get_image.py")
+        if _spec and _spec.loader:
+            _mod = importlib.util.module_from_spec(_spec)
+            _spec.loader.exec_module(_mod)  # type: ignore
+            generate_image_with_openrouter = _mod.generate_image_with_openrouter  # type: ignore
+        else:
+            raise ImportError("Cannot load local get_image.py")
 
 
 # 注册插件
