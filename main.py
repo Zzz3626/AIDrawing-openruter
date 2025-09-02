@@ -300,6 +300,17 @@ class Fct(BasePlugin):
             except Exception:
                 return False
 
+        def _image_to_base64(file_path: str) -> str:
+            """将本地图片转换为 base64 格式"""
+            try:
+                with open(file_path, 'rb') as f:
+                    img_data = f.read()
+                    b64_data = base64.b64encode(img_data).decode('utf-8')
+                    return b64_data
+            except Exception as e:
+                self.ap.logger.error(f"转换图片为 base64 失败: {e}")
+                raise
+
         # 1) “图片已生成: 本地路径”
         m = generated_image_pattern.search(message)
         if m:
@@ -307,8 +318,9 @@ class Fct(BasePlugin):
             try:
                 self.ap.logger.info(f"检测到生成的图片，正在发送.. {path}")
                 if os.path.exists(path):
-                    # 使用本地路径字段，避免 url 字段的 http/https 校验
-                    ctx.add_return('reply', MessageChain([Image(path=path)]))
+                    # 转换为 base64 发送，避免路径识别问题
+                    b64_data = _image_to_base64(path)
+                    ctx.add_return('reply', MessageChain([Image(base64=b64_data)]))
                 else:
                     ctx.add_return('reply', MessageChain([Plain(f"图片文件不存在: {path}")]))
             except Exception as e:
@@ -325,7 +337,9 @@ class Fct(BasePlugin):
                 if _is_http_url(m.group(1)):
                     ctx.add_return('reply', MessageChain([Image(url=m.group(1))]))
                 elif os.path.exists(path):
-                    ctx.add_return('reply', MessageChain([Image(path=path)]))
+                    # 转换为 base64 发送
+                    b64_data = _image_to_base64(path)
+                    ctx.add_return('reply', MessageChain([Image(base64=b64_data)]))
                 else:
                     ctx.add_return('reply', MessageChain([Plain(f"图片文件不存在: {path}")]))
             except Exception as e:
@@ -354,8 +368,9 @@ class Fct(BasePlugin):
             try:
                 self.ap.logger.info(f"正在发送本地图片.. {path}")
                 if os.path.exists(path):
-                    # 通过 path 字段发送本地文件，避免 pydantic HttpUrl 校验
-                    ctx.add_return('reply', MessageChain([Image(path=path)]))
+                    # 转换为 base64 发送
+                    b64_data = _image_to_base64(path)
+                    ctx.add_return('reply', MessageChain([Image(base64=b64_data)]))
                 else:
                     ctx.add_return('reply', MessageChain([Plain(f"图片文件不存在: {path}")]))
             except Exception as e:
@@ -464,8 +479,11 @@ class Fct(BasePlugin):
                     api_key=(_get_api_key(openrouter_cfg) or None),
                 )
                 self.ap.logger.info(f"{prefix} 生成完成，发送本地图片: {img_path}")
-                # 直接以本地文件路径发送，避免 URL 校验与长度限制
-                return ctx.add_return('reply', MessageChain([Image(path=os.path.abspath(img_path))]))
+                # 转换为 base64 发送，避免路径识别问题
+                with open(img_path, 'rb') as f:
+                    img_data = f.read()
+                    b64_data = base64.b64encode(img_data).decode('utf-8')
+                return ctx.add_return('reply', MessageChain([Image(base64=b64_data)]))
             except Exception as e:
                 self.ap.logger.warning(f"OpenRouter 生成失败，准备回退: {e}")
                 try:
