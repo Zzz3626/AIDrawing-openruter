@@ -278,6 +278,15 @@ class Fct(BasePlugin):
         def _sanitize_path(p: str) -> str:
             p = (p or '').strip().strip('"').strip("'")
             return os.path.abspath(p)
+        
+        def _to_file_uri(p: str) -> str:
+            ap = os.path.abspath(p)
+            # normalize to forward slashes and leading slash for Windows
+            if os.name == 'nt':
+                ap = ap.replace('\\', '/')
+                if not ap.startswith('/'):
+                    ap = '/' + ap
+            return f"file://{ap}"
 
         # 1) “图片已生成: 本地路径”
         m = generated_image_pattern.search(message)
@@ -286,7 +295,8 @@ class Fct(BasePlugin):
             try:
                 self.ap.logger.info(f"检测到生成的图片，正在发送.. {path}")
                 if os.path.exists(path):
-                    ctx.add_return('reply', MessageChain([Image(path=path)]))
+                    file_uri = _to_file_uri(path)
+                    ctx.add_return('reply', MessageChain([Image(url=file_uri)]))
                 else:
                     ctx.add_return('reply', MessageChain([Plain(f"图片文件不存在: {path}")]))
             except Exception as e:
@@ -300,7 +310,8 @@ class Fct(BasePlugin):
             try:
                 self.ap.logger.info(f"正在发送本地图片.. {path}")
                 if os.path.exists(path):
-                    ctx.add_return('reply', MessageChain([Image(path=path)]))
+                    file_uri = _to_file_uri(path)
+                    ctx.add_return('reply', MessageChain([Image(url=file_uri)]))
                 else:
                     ctx.add_return('reply', MessageChain([Plain(f"图片文件不存在: {path}")]))
             except Exception as e:
@@ -329,7 +340,8 @@ class Fct(BasePlugin):
             try:
                 self.ap.logger.info(f"正在发送本地图片.. {path}")
                 if os.path.exists(path):
-                    ctx.add_return('reply', MessageChain([Image(path=path)]))
+                    file_uri = _to_file_uri(path)
+                    ctx.add_return('reply', MessageChain([Image(url=file_uri)]))
                 else:
                     ctx.add_return('reply', MessageChain([Plain(f"图片文件不存在: {path}")]))
             except Exception as e:
