@@ -46,9 +46,10 @@ async def download_image(url: str, out_path: str = "drawertemp.png") -> str:
         import aiofiles
         async with aiofiles.open(out_path, 'wb') as f:
             await f.write(content)
-    abs_path = os.path.abspath(out_path)
-    log.debug(f"Downloaded image to {abs_path} from {url}")
-    return abs_path
+    # 如果传入的已经是绝对路径，直接返回，否则使用 abspath
+    final_path = out_path if os.path.isabs(out_path) else os.path.abspath(out_path)
+    log.debug(f"Downloaded image to {final_path} from {url}")
+    return final_path
 
 
 async def generate_image_with_openrouter(

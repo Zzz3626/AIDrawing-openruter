@@ -185,7 +185,8 @@ class Fct(BasePlugin):
         cfg = self.config
         openrouter_cfg = cfg.get('openrouter', {})
         fallback_cfg = cfg.get('fallback', {})
-        out_dir = cfg.get('storage', {}).get('output_dir') or 'generated'
+        # 使用已配置的绝对路径
+        out_dir = cfg.get('storage', {}).get('output_dir') or '/root/LangBot/plugins/AIDrawing-openruter/generated'
 
         # Helper to robustly extract API key from config/root/env
         def _get_api_key(openrouter_dict, root_cfg=self.config):
@@ -210,6 +211,8 @@ class Fct(BasePlugin):
 
         if openrouter_cfg.get('enabled', True):
             try:
+                # 确保输出目录存在
+                os.makedirs(out_dir, exist_ok=True)
                 filename = f"drawer_{uuid.uuid4().hex}.png"
                 out_path = os.path.join(out_dir, filename)
                 try:
@@ -333,7 +336,8 @@ class Fct(BasePlugin):
         cfg = self.config
         openrouter_cfg = cfg.get('openrouter', {})
         fallback_cfg = cfg.get('fallback', {})
-        out_dir = cfg.get('storage', {}).get('output_dir') or 'generated'
+        # 使用已配置的绝对路径
+        out_dir = cfg.get('storage', {}).get('output_dir') or '/root/LangBot/plugins/AIDrawing-openruter/generated'
 
         # Helper to robustly extract API key from config/root/env
         def _get_api_key(openrouter_dict, root_cfg=self.config):
@@ -358,6 +362,8 @@ class Fct(BasePlugin):
 
         if openrouter_cfg.get('enabled', True):
             try:
+                # 确保输出目录存在
+                os.makedirs(out_dir, exist_ok=True)
                 filename = f"drawer_{uuid.uuid4().hex}.png"
                 out_path = os.path.join(out_dir, filename)
                 try:
