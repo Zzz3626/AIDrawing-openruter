@@ -7,6 +7,7 @@ import json
 import uuid
 import logging
 from pathlib import Path
+import base64
 
 # Prefer local get_image within this plugin; fall back gracefully
 try:
@@ -293,11 +294,10 @@ class Fct(BasePlugin):
             try:
                 self.ap.logger.info(f"检测到生成的图片，正在发送.. {path}")
                 if os.path.exists(path):
-                    file_uri = _to_file_uri(path)
-                    try:
-                        ctx.add_return('reply', MessageChain([Image(url=file_uri)]))
-                    except Exception:
-                        ctx.add_return('reply', MessageChain([Image(path=path)]))
+                    with open(path, 'rb') as _f:
+                        b64 = base64.b64encode(_f.read()).decode('ascii')
+                    b64_uri = f"base64://{b64}"
+                    ctx.add_return('reply', MessageChain([Image(url=b64_uri)]))
                 else:
                     self.ap.logger.warning(f"生成的图片文件不存在: {path}")
                     ctx.add_return('reply', MessageChain([Plain(f"图片文件不存在: {path}")]))
@@ -312,11 +312,10 @@ class Fct(BasePlugin):
             try:
                 self.ap.logger.info(f"正在发送本地图片.. {path}")
                 if os.path.exists(path):
-                    file_uri = _to_file_uri(path)
-                    try:
-                        ctx.add_return('reply', MessageChain([Image(url=file_uri)]))
-                    except Exception:
-                        ctx.add_return('reply', MessageChain([Image(path=path)]))
+                    with open(path, 'rb') as _f:
+                        b64 = base64.b64encode(_f.read()).decode('ascii')
+                    b64_uri = f"base64://{b64}"
+                    ctx.add_return('reply', MessageChain([Image(url=b64_uri)]))
                 else:
                     self.ap.logger.warning(f"图片文件不存在: {path}")
                     ctx.add_return('reply', MessageChain([Plain(f"图片文件不存在: {path}")]))
@@ -346,11 +345,10 @@ class Fct(BasePlugin):
             try:
                 self.ap.logger.info(f"正在发送本地图片.. {path}")
                 if os.path.exists(path):
-                    file_uri = _to_file_uri(path)
-                    try:
-                        ctx.add_return('reply', MessageChain([Image(url=file_uri)]))
-                    except Exception:
-                        ctx.add_return('reply', MessageChain([Image(path=path)]))
+                    with open(path, 'rb') as _f:
+                        b64 = base64.b64encode(_f.read()).decode('ascii')
+                    b64_uri = f"base64://{b64}"
+                    ctx.add_return('reply', MessageChain([Image(url=b64_uri)]))
                 else:
                     self.ap.logger.warning(f"图片文件不存在: {path}")
                     ctx.add_return('reply', MessageChain([Plain(f"图片文件不存在: {path}")]))
