@@ -137,9 +137,18 @@ class Fct(BasePlugin):
                 self._logger.exception("Failed to load config.json: %s", e)
             except Exception:
                 pass
-        # 确保输出目录存在
-        out_dir = self.config.get('storage', {}).get('output_dir') or 'generated'
+        # 确保输出目录存在：将相对路径固定到插件目录（与 logs 同级）
+        storage_cfg = self.config.get('storage', {}) or {}
+        raw_out_dir = storage_cfg.get('output_dir') or 'generated'
         try:
+            try:
+                _plugin_dir = os.path.dirname(__file__)
+            except Exception:
+                _plugin_dir = os.getcwd()
+            out_dir = raw_out_dir if os.path.isabs(raw_out_dir) else os.path.join(_plugin_dir, raw_out_dir)
+            # 回写标准化后的绝对路径，便于后续调用
+            if isinstance(self.config.get('storage'), dict):
+                self.config['storage']['output_dir'] = out_dir
             os.makedirs(out_dir, exist_ok=True)
         except Exception as e:
             if hasattr(self, 'ap') and getattr(self, 'ap', None):
@@ -246,7 +255,7 @@ class Fct(BasePlugin):
             path = file_url.replace('file://', '')
             try:
                 self.ap.logger.info(f"正在发送本地图片... {path}")
-                ctx.add_return('reply', MessageChain([Image(path=path)]))
+                ctx.add_return('reply', MessageChain([Image(url=file_url)]))
             except Exception as e:
                 await ctx.send_message(ctx.event.launcher_type, str(ctx.event.launcher_id), MessageChain([f"发生了一个错误：{e}"]))
         else:
@@ -313,7 +322,7 @@ class Fct(BasePlugin):
                     api_key=(_get_api_key(openrouter_cfg) or None),
                 )
                 self.ap.logger.info(f"{prefix} 生成完成，发送本地图片 {img_path}")
-                return ctx.add_return('reply', MessageChain([Image(path=img_path)]))
+                return ctx.add_return('reply', MessageChain([Image(url=f"file://{img_path}")]))
             except Exception as e:
                 self.ap.logger.warning(f"OpenRouter 生成失败，准备回退: {e}")
                 try:
