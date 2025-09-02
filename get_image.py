@@ -323,44 +323,22 @@ async def generate_image_with_openrouter(
 
         return None
 
-    # First attempt: Responses API with image modality
-    try:
-        log.debug(f"Calling OpenRouter Responses API model={model}, headers={(list(headers.keys()) or None)} size={size}")
-        responses = getattr(client, "responses", None)
-        if responses is not None and hasattr(responses, "create"):
-            # OpenAI Responses API shape
-            resp = responses.create(
-                model=model,
-                input=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "input_text", "text": prompt},
-                        ],
-                    }
-                ],
-                # Explicitly ask for image output
-                modalities=["image"],
-                extra_headers=headers or None,
-                # Some providers expect image config here
-                extra_body={"image": {"size": size}} if size else None,
-            )
-            saved = await _save_from_any(resp)
-            if isinstance(saved, str):
-                return saved
-            # If Responses produced nothing usable, fall through to chat
-            log.debug("Responses API returned no image payload; falling back to chat.completions")
-    except Exception as e:
-        log.debug("Responses API call failed, will fall back to chat.completions: %s", e)
-
-    # Fallback: chat.completions; ask for an image and parse
+    # First attempt: chat.completions mirroring the simple sample flow
     log.debug(f"Calling OpenRouter Chat Completions model={model}, headers={(list(headers.keys()) or None)}")
     completion = client.chat.completions.create(
         model=model,
         messages=[
-            {"role": "system", "content": "You generate images. Return an image output (URL or base64 data URI)."},
-            {"role": "user", "content": [{"type": "text", "text": prompt}]},
+            {
+                "role": "system",
+                "content": (
+                    "You are an image generator. Return exactly one data URI in the form "
+                    "data:image/png;base64,<BASE64>. Do not include any extra text."
+                ),
+            },
+            {"role": "user", "content": prompt},
         ],
+        temperature=0.8,
+        max_tokens=4000,
         extra_headers=headers or None,
     )
     # Try to parse structured parts first
@@ -392,7 +370,56 @@ async def generate_image_with_openrouter(
             log.info(f"Downloading image from URL: {url}")
             return await download_image(url, out_path)
 
-    # If no image is found, surface the raw content for debugging
-    preview = content if isinstance(content, str) else str(_to_plain(completion))[:200]
-    log.warning("Model did not return an image. First 200 chars: %s", preview[:200])
-    raise RuntimeError(f"模型未返回图片，返回内容: {preview[:200]}...")
+    # Second attempt: Responses API with image modality (as a fallback)
+    try:
+        log.debug(f"Calling OpenRouter Responses API model={model}, headers={(list(headers.keys()) or None)} size={size}")
+        responses = getattr(client, "responses", None)
+        if responses is not None and hasattr(responses, "create"):
+            # Simpler input to align with generic examples
+            resp = responses.create(
+                model=model,
+                input=prompt,
+                modalities=["image"],
+                extra_headers=headers or None,
+                extra_body={"image": {"size": size}} if size else None,
+                max_output_tokens=4000,
+                temperature=0.8,
+            )
+            saved = await _save_from_any(resp)
+            if isinstance(saved, str):
+                return saved
+            # Broad regex over the entire response JSON as last-ditch
+            try:
+                plain = _to_plain(resp)
+                txt = json.dumps(plain, ensure_ascii=False)
+                m = re.search(r"data:image/[^;]+;base64,([A-Za-z0-9+/=]+)", txt, flags=re.IGNORECASE)
+                if m:
+                    with open(out_path, "wb") as f:
+                        f.write(base64.b64decode(m.group(1)))
+                    return os.path.abspath(out_path)
+            except Exception as _e:
+                log.debug("Responses JSON scan failed: %s", _e)
+    except Exception as e:
+        log.debug("Responses API call failed: %s", e)
+
+    # If no image is found, dump compact JSON for debugging and surface an error
+    try:
+        debug_obj = _to_plain(completion)
+        debug_txt = json.dumps(debug_obj, ensure_ascii=False)[:200]
+    except Exception:
+        debug_txt = (content if isinstance(content, str) else "")[:200]
+    log.warning("Model did not return an image. First 200 chars: %s", debug_txt)
+    # Persist full response for troubleshooting
+    try:
+        base_dir = Path(__file__).parent if Path(__file__).exists() else Path(os.getcwd())
+        dbg_path = base_dir / "logs" / "last_openrouter_response.json"
+        dbg_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(dbg_path, "w", encoding="utf-8") as f:
+            try:
+                json.dump(_to_plain(completion), f, ensure_ascii=False)
+            except Exception:
+                f.write(str(completion))
+        log.info("Saved debug response to %s", dbg_path)
+    except Exception:
+        pass
+    raise RuntimeError(f"模型未返回图片，返回内容: {debug_txt}...")
