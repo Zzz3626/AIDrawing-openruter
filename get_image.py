@@ -3,6 +3,8 @@ import base64
 import httpx
 import logging
 from pathlib import Path
+import json
+import re
 
 
 _logger = None
@@ -57,6 +59,7 @@ async def generate_image_with_openrouter(
     site_title: str | None = None,
     model: str = "google/gemini-2.5-flash-image-preview:free",
     api_key: str | None = None,
+    size: str | None = "1024x1024",
 ) -> str:
     """
     Generate an image using OpenRouter's API with Gemini 2.5 Flash Image Preview model.
@@ -111,48 +114,204 @@ async def generate_image_with_openrouter(
         api_key=effective_key,
     )
 
-    # Prefer the Images API if supported; fall back to chat if not.
+    # Prefer Responses API with explicit image modality; fall back to chat.
     headers = {}
     if site_url:
         headers["HTTP-Referer"] = site_url
     if site_title:
         headers["X-Title"] = site_title
 
-    # Use chat.completions per OpenRouter's Gemini example; parse for image data/url
-    log.debug(f"Calling OpenRouter model={model}, headers={(list(headers.keys()) or None)}")
+    def _to_plain(obj):
+        try:
+            if hasattr(obj, "model_dump"):
+                return obj.model_dump()
+            if hasattr(obj, "model_dump_json"):
+                return json.loads(obj.model_dump_json())
+            if hasattr(obj, "to_dict"):
+                return obj.to_dict()
+            if hasattr(obj, "dict"):
+                return obj.dict()
+        except Exception:
+            pass
+        return obj
+
+    def _iter_nodes(o):
+        stack = [o]
+        while stack:
+            cur = stack.pop()
+            if isinstance(cur, dict):
+                yield cur
+                for v in cur.values():
+                    stack.append(v)
+            elif isinstance(cur, (list, tuple)):
+                for v in cur:
+                    stack.append(v)
+            else:
+                # non-iterable leaf
+                continue
+
+    async def _save_from_any(obj) -> str | None:
+        plain = _to_plain(obj)
+        # 1) Look for explicit image fields first (b64 or URL)
+        for node in _iter_nodes(plain):
+            if not isinstance(node, dict):
+                continue
+            # OpenAI Responses API style: {"type":"output_image", "image": {"b64":..., "mime_type":...}} or variants
+            if node.get("type") in {"output_image", "image", "image_url"}:
+                img = node.get("image") or node.get("image_url") or node
+                if isinstance(img, dict):
+                    # Base64 variants
+                    for k in ("b64_json", "b64", "base64", "data"):
+                        b64v = img.get(k)
+                        if isinstance(b64v, str) and len(b64v) > 64:
+                            try:
+                                # allow possible data:image/...;base64, prefix
+                                if b64v.startswith("data:image"):
+                                    comma = b64v.find(",")
+                                    if comma != -1:
+                                        b64v = b64v[comma + 1 :]
+                                data = base64.b64decode(b64v)
+                                with open(out_path, "wb") as f:
+                                    f.write(data)
+                                abs_path = os.path.abspath(out_path)
+                                log.info(f"Saved image b64 to {abs_path}")
+                                return abs_path
+                            except Exception as _e:
+                                log.debug("Base64 decode candidate failed: %s", _e)
+                    # URL variants
+                    url = img.get("url") or img.get("image_url")
+                    if isinstance(url, str) and url.startswith("http"):
+                        log.info(f"Downloading image from URL: {url}")
+                        return await download_image(url, out_path)
+            # Some providers return {"mime_type":"image/png","url":"..."}
+            if (node.get("mime_type", "").startswith("image/") and isinstance(node.get("url"), str)):
+                url = node["url"]
+                if url.startswith("http"):
+                    log.info(f"Downloading image from URL: {url}")
+                    return await download_image(url, out_path)
+
+        # 2) Check message content string(s) for data URL or http URL
+        try:
+            # Accept assistant message content in both string and parts array forms
+            if isinstance(obj, dict):
+                content_val = obj.get("content")
+            else:
+                content_val = getattr(obj, "content", None)
+        except Exception:
+            content_val = None
+
+        def _try_extract_from_text(s: str) -> str | None:
+            data_uri_match = re.search(r"data:image/(png|jpeg);base64,([A-Za-z0-9+/=]+)", s)
+            if data_uri_match:
+                img_bytes = base64.b64decode(data_uri_match.group(2))
+                with open(out_path, "wb") as f:
+                    f.write(img_bytes)
+                abs_path = os.path.abspath(out_path)
+                log.info(f"Saved image from data URI to {abs_path}")
+                return abs_path
+            url_match = re.search(r"https?://\S+", s)
+            if url_match:
+                url = url_match.group(0)
+                log.info(f"Downloading image from URL: {url}")
+                return None  # Let caller handle download to avoid duplicate writes
+            return None
+
+        if isinstance(content_val, str):
+            maybe = _try_extract_from_text(content_val)
+            if isinstance(maybe, str):
+                return maybe
+            # If a URL was detected, try download here
+            url_match = re.search(r"https?://\S+", content_val)
+            if url_match:
+                return await download_image(url_match.group(0), out_path)
+        elif isinstance(content_val, list):
+            for part in content_val:
+                if isinstance(part, dict):
+                    t = part.get("type")
+                    if t in {"image_url", "image", "output_image"}:
+                        url = (part.get("image_url") or part.get("image") or {}).get("url") if isinstance(part.get("image_url") or part.get("image"), dict) else None
+                        if isinstance(url, str) and url.startswith("http"):
+                            return await download_image(url, out_path)
+                    txt = part.get("text") or part.get("input_text") or ""
+                    if isinstance(txt, str) and txt:
+                        maybe = _try_extract_from_text(txt)
+                        if isinstance(maybe, str):
+                            return maybe
+                        u = re.search(r"https?://\S+", txt)
+                        if u:
+                            return await download_image(u.group(0), out_path)
+
+        return None
+
+    # First attempt: Responses API with image modality
+    try:
+        log.debug(f"Calling OpenRouter Responses API model={model}, headers={(list(headers.keys()) or None)} size={size}")
+        responses = getattr(client, "responses", None)
+        if responses is not None and hasattr(responses, "create"):
+            # OpenAI Responses API shape
+            resp = responses.create(
+                model=model,
+                input=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": prompt},
+                        ],
+                    }
+                ],
+                # Explicitly ask for image output
+                modalities=["image"],
+                extra_headers=headers or None,
+                # Some providers expect image config here
+                extra_body={"image": {"size": size}} if size else None,
+            )
+            saved = await _save_from_any(resp)
+            if isinstance(saved, str):
+                return saved
+            # If Responses produced nothing usable, fall through to chat
+            log.debug("Responses API returned no image payload; falling back to chat.completions")
+    except Exception as e:
+        log.debug("Responses API call failed, will fall back to chat.completions: %s", e)
+
+    # Fallback: chat.completions; ask for an image and parse
+    log.debug(f"Calling OpenRouter Chat Completions model={model}, headers={(list(headers.keys()) or None)}")
     completion = client.chat.completions.create(
         model=model,
         messages=[
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                ],
-            }
+            {"role": "system", "content": "You generate images. Return an image output (URL or base64 data URI)."},
+            {"role": "user", "content": [{"type": "text", "text": prompt}]},
         ],
         extra_headers=headers or None,
     )
-    content = completion.choices[0].message.content or ""
-    log.debug("OpenRouter raw content length=%d", len(content))
+    # Try to parse structured parts first
+    try:
+        msg = completion.choices[0].message
+    except Exception:
+        msg = None
+    if msg is not None:
+        saved = await _save_from_any(_to_plain(msg))
+        if isinstance(saved, str):
+            return saved
 
-    # Try to extract a data URL or http(s) URL from the content
-    import re
-    data_uri_match = re.search(r"data:image/(png|jpeg);base64,([A-Za-z0-9+/=]+)", content)
-    if data_uri_match:
-        img_bytes = base64.b64decode(data_uri_match.group(2))
-        with open(out_path, "wb") as f:
-            f.write(img_bytes)
-        abs_path = os.path.abspath(out_path)
-        log.info(f"Saved image from data URI to {abs_path}")
-        return abs_path
-
-    url_match = re.search(r"https?://\S+", content)
-    if url_match:
-        # Download the referenced URL
-        url = url_match.group(0)
-        log.info(f"Downloading image from URL: {url}")
-        return await download_image(url, out_path)
+    # Last resort: treat message content as plain text
+    content = (getattr(getattr(completion.choices[0], "message", {}), "content", "") or "")
+    if isinstance(content, str):
+        log.debug("OpenRouter raw content length=%d", len(content))
+        data_uri_match = re.search(r"data:image/(png|jpeg);base64,([A-Za-z0-9+/=]+)", content)
+        if data_uri_match:
+            img_bytes = base64.b64decode(data_uri_match.group(2))
+            with open(out_path, "wb") as f:
+                f.write(img_bytes)
+            abs_path = os.path.abspath(out_path)
+            log.info(f"Saved image from data URI to {abs_path}")
+            return abs_path
+        url_match = re.search(r"https?://\S+", content)
+        if url_match:
+            url = url_match.group(0)
+            log.info(f"Downloading image from URL: {url}")
+            return await download_image(url, out_path)
 
     # If no image is found, surface the raw content for debugging
-    log.warning("Model did not return an image. First 200 chars: %s", content[:200])
-    raise RuntimeError(f"模型未返回图片，返回内容: {content[:200]}...")
+    preview = content if isinstance(content, str) else str(_to_plain(completion))[:200]
+    log.warning("Model did not return an image. First 200 chars: %s", preview[:200])
+    raise RuntimeError(f"模型未返回图片，返回内容: {preview[:200]}...")
